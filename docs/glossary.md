@@ -56,3 +56,22 @@ Plain-English meanings of every technical term, with where it first appears.
 | Early return | Leaving a function as soon as you know the answer, which keeps the code flat and readable. | `Tier.sell` |
 | Virtual environment (venv) | A private copy of Python with its own installed libraries, kept in a folder (usually `.venv`). | `learning/examples/.venv-demo`, the project's `.venv` (S0.4) |
 | `sys.prefix` | Where the running Python lives. It changes when you're inside a venv. | The S0.3 venv demo |
+
+## Web basics (S0.5)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| HTTP | The language browsers and apps use to talk to servers: a request goes in and a response comes back. | Every endpoint |
+| HTTP method | The kind of action: `GET` reads, `POST` creates, `PATCH` changes, `DELETE` removes. | `@app.get` in `app/main.py` |
+| Path | The part of the URL that names the thing, such as `/events/42`. | Routes |
+| Status code | A number in the response saying how it went: 200 OK, 201 Created, 404 Not Found, 409 Conflict, 500 server error. | `learning/02-http-basics.md` |
+| JSON | Text-format data that looks like Python dicts and lists; the usual request and response body. | `{"message": ...}` |
+| REST | A convention: paths name things (nouns) and methods say the action. | The API surface |
+| Route / endpoint | One method plus path that the server answers, such as `GET /`. | `read_root` in `app/main.py` |
+| FastAPI | The Python web framework: you write functions, and it turns HTTP requests into calls to them. | `app/main.py` |
+| uvicorn | The server program that listens on a port and hands requests to FastAPI. | `python -m uvicorn app.main:app` |
+| Port | A numbered "door" on a computer that a server listens on (8000 here). | `--port 8000` |
+| `async def` | A function that can pause while it waits (for a database, say), letting the server handle other requests meanwhile. | `read_root` |
+| OpenAPI / Swagger UI | A machine-readable description of the API (`/openapi.json`) and the interactive page built from it (`/docs`). | http://127.0.0.1:8000/docs |
+| Dependency (library) | Someone else's code our project uses, listed in `pyproject.toml` and pinned in `uv.lock`. | `pyproject.toml` |
+| Smart App Control | A Windows 11 security feature that blocks unsigned programs. It blocks the `.exe` launchers inside `.venv`, so run tools as `python -m <tool>`. | S0.5 |

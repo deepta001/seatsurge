@@ -11,6 +11,7 @@ checked. The teach-back for all of them happens at the end.
 
 - S0.3 Python refresher: built and run, not checked.
 - S0.4 Repo, uv project and folder layout: built, not checked.
+- S0.5 Hello FastAPI app: built, not checked.
 
 ## Shaky topics
 
@@ -114,5 +115,34 @@ OneDrive to `C:\Users\deept\dev\seatsurge`. Added:
 
 **Key concepts:** Git repository, staging, lockfile, packages
 (`__init__.py`), line endings (LF vs CRLF).
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S0.5: Hello FastAPI app (2026-11-07)
+
+**What was built:**
+- Added `fastapi` and `uvicorn` with `uv add`. They pulled in pydantic,
+  starlette and anyio, plus `opentelemetry-api`, which FastAPI itself
+  depends on.
+- `app/main.py` creates the `FastAPI` app with one route, `GET /`, which
+  returns `{"message": "Hello from seatsurge"}`.
+- `learning/02-http-basics.md` covers methods, status codes, JSON and REST.
+
+**Ran it:** `uv run python -m uvicorn app.main:app --port 8000`.
+- `GET /` returned 200 with the hello JSON.
+- An unknown path returned 404.
+- `/docs` showed the Swagger UI with the `GET /` route.
+
+**Debugging moment:** `uv run uvicorn ...` failed with "An Application Control
+policy has blocked this file". Windows Smart App Control blocks the unsigned
+`uvicorn.exe` launcher in `.venv\Scripts`. Running it as `python -m uvicorn`
+works, and the security setting was left alone.
+
+**Key concepts:** HTTP, methods, status codes, JSON, REST, routes, FastAPI,
+uvicorn, ports, `async def`, OpenAPI/Swagger.
+
+**Not yet tested automatically:** the first pytest comes in S0.8.
 
 **Understanding check:** deferred to the end of the project.

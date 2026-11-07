@@ -5,4 +5,7 @@ description = "A ticket booking backend that never oversells under heavy concurr
 readme = "README.md"
 # The stack is fixed to Python 3.12 (CLAUDE.md section 2).
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = [
+    "fastapi>=0.162.1",
+    "uvicorn>=0.54.0",
+]

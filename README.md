@@ -43,7 +43,12 @@ Python 3.12, [uv](https://docs.astral.sh/uv/), Git and Docker Desktop.
 
 ```
 uv sync
+uv run python -m uvicorn app.main:app --reload
 ```
+
+Then open http://127.0.0.1:8000/docs. On Windows, use `python -m uvicorn`
+rather than `uvicorn`, because Smart App Control blocks the unsigned launcher
+in `.venv\Scripts`.
 
 ## Out of scope
 
