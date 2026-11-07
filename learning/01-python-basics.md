@@ -9,8 +9,7 @@ kitchen's ingredients never get mixed in.
 ## Type hints
 
 ```python
-def sell(quantity: int) -> bool:
-    ...
+def sell(quantity: int) -> bool: ...
 ```
 
 `quantity: int` says "this should be a whole number", and `-> bool` says

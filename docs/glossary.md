@@ -133,3 +133,17 @@ Plain-English meanings of every technical term, with where it first appears.
 | TestClient | Sends fake HTTP requests into the app without a real server (needs httpx). | `test_health.py` |
 | Dev dependency | A library needed only for development or testing, never shipped with the app. | `[dependency-groups] dev` in `pyproject.toml` |
 | IPv6 / `::1` | The newer internet address format; `::1` is IPv6's "this computer", like 127.0.0.1 in IPv4. | The S0.8 localhost bug |
+
+## Code quality and CI (S0.9)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| Linter | A tool that reads code and flags mistakes and risky patterns without running it. | ruff |
+| Formatter | A tool that rewrites code into one consistent layout, so style is never argued about. | `ruff format` |
+| ruff | Our linter and formatter, configured in `[tool.ruff]`. | `pyproject.toml` |
+| Static type checker | A tool that checks type hints across the code before it runs (it caught `capacity='3'`). | mypy |
+| mypy strict mode | The strictest mypy settings: no `Any` leaks, every type is explicit. Used on `app/services`. | `[[tool.mypy.overrides]]` |
+| CI (continuous integration) | Automatically running the checks on a clean machine for every push, so broken code is noticed at once. | `.github/workflows/ci.yml` |
+| GitHub Actions | GitHub's CI service; it runs the workflow files in `.github/workflows/`. | `ci.yml` |
+| Workflow / job / step | A workflow is a CI file; a job is one machine running it; steps are the commands it runs in order. | `ci.yml` |
+| `uv sync --locked` | Installs exactly what's in `uv.lock`, and fails if the lockfile is out of date. | The CI install step |

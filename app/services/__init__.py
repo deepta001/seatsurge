@@ -1,1 +1,1 @@
-"""Business logic (holds, orders, events, auth), kept separate from HTTP so it can be tested directly."""
+"""Business logic (holds, orders, events, auth), kept apart from HTTP so it's easy to test."""

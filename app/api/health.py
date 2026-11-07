@@ -1,6 +1,7 @@
-"""Health endpoints: /health/live (is the process up?) and /health/ready (can it reach Postgres and Redis?).
+"""Health endpoints: /health/live (is the process up?) and /health/ready (can it do real work?).
 
-Load balancers and Docker use these to decide whether to send traffic to this replica.
+Ready means Postgres and Redis both answer. Load balancers and Docker use these
+to decide whether to send traffic to this replica.
 """
 
 import asyncio

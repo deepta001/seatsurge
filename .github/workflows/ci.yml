@@ -1,0 +1,45 @@
+# Continuous integration: on every push and pull request, GitHub starts a
+# fresh Linux machine, installs the exact locked dependencies, and runs the
+# same checks you run locally. A red X on GitHub means one of them failed.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Read-only access is all these checks need.
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Get the code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      # --locked fails if uv.lock is out of date with pyproject.toml, so CI
+      # never quietly uses different versions than you do. uv also installs
+      # the Python version named in .python-version (3.12).
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Lint (ruff)
+        run: uv run python -m ruff check .
+
+      - name: Formatting (ruff)
+        run: uv run python -m ruff format --check .
+
+      - name: Type check (mypy)
+        run: uv run python -m mypy
+
+      # No .env exists in CI; tests/conftest.py supplies safe dummy settings.
+      - name: Tests (pytest)
+        run: uv run python -m pytest -v

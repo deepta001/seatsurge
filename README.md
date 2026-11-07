@@ -48,7 +48,13 @@ docker compose up -d --wait        # Postgres 16 + Redis 7
 uv run python -m scripts.check_connections
 uv run python -m uvicorn app.main:app --reload
 uv run python -m pytest -v         # run the tests
+uv run python -m ruff check .      # lint
+uv run python -m ruff format .     # auto-format
+uv run python -m mypy              # type check
 ```
+
+CI (`.github/workflows/ci.yml`) runs ruff, mypy and pytest on every push to
+`main` and on every pull request.
 
 Health checks: `GET /health/live` (is the process up?) and `GET /health/ready`
 (can it reach Postgres and Redis? It returns 503 if not). Both are covered by

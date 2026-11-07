@@ -15,6 +15,7 @@ checked. The teach-back for all of them happens at the end.
 - S0.6 Settings from .env: built, not checked.
 - S0.7 Docker Compose with Postgres and Redis: built, not checked.
 - S0.8 Health endpoints and first pytest: built, not checked.
+- S0.9 GitHub Actions CI with ruff, mypy and pytest: built, not checked.
 
 ## Shaky topics
 
@@ -252,5 +253,37 @@ also run against the real services (and why integration tests come later).
 **Key concepts:** liveness vs readiness, 503, lifespan, `app.state`, FastAPI
 dependencies, routers, response models, timeouts, `gather`, pytest
 fixtures, conftest, monkeypatch, TestClient.
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S0.9: GitHub Actions CI (2026-11-07)
+
+**What was built:**
+- The dev dependencies `ruff` and `mypy`, configured in `pyproject.toml`:
+  - ruff: line length 100; rule sets E, W, F, I, B and UP; `Depends`
+    allowed in defaults.
+  - mypy: checks `app`, `tests` and `scripts`; every function must be typed;
+    `strict` on `app.services.*`.
+- `.github/workflows/ci.yml` runs on each push to `main` and on every pull
+  request. It runs `uv sync --locked`, ruff check, ruff format --check, mypy
+  and pytest on ubuntu-latest, with read-only permissions.
+
+**Ran it:**
+- The first ruff run found 2 lines that were too long, plus 1 primer snippet
+  to reformat; all fixed. The first mypy run found no issues.
+- CI simulation: copied only the files Git would push (no `.env`, no `.venv`)
+  into a clean folder, ran `uv sync --locked`, and every step passed
+  (4 tests).
+- Break-it: mypy caught `Tier("floor", capacity="3")` before running it
+  ("incompatible type 'str'; expected 'int'"). That's the bug Python itself
+  only caught at runtime in S0.3.
+
+**Not verified yet:** the workflow hasn't run on GitHub itself, because
+nothing has been pushed.
+
+**Key concepts:** linter vs formatter vs type checker, CI, workflows / jobs /
+steps, locked installs.
 
 **Understanding check:** deferred to the end of the project.

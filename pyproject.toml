@@ -17,10 +17,39 @@ dependencies = [
 [dependency-groups]
 dev = [
     "httpx>=0.28.1",
+    "mypy>=2.4.1",
     "pytest>=9.2.0",
+    "ruff>=0.17.4",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # Lets tests `import app...` no matter where pytest is started from.
 pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# E/W: style errors, F: real bugs (unused or undefined names), I: import order,
+# B: common bug patterns, UP: use modern Python syntax.
+select = ["E", "W", "F", "I", "B", "UP"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's `param = Depends(...)` pattern is intended, not the classic
+# "function call in a default argument" bug.
+extend-immutable-calls = ["fastapi.Depends"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["app", "tests", "scripts"]
+# Every function must have type hints, even outside app/services.
+disallow_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+
+# CLAUDE.md section 2: mypy is strict on app/services (the business logic).
+[[tool.mypy.overrides]]
+module = "app.services.*"
+strict = true
