@@ -1,0 +1,50 @@
+# seatsurge
+
+A ticket booking backend that stays correct when thousands of people try to
+buy the same limited seats at once.
+
+> **Status:** early setup (step S0.4). Nothing in this README is a working
+> feature yet; features are only listed here once a test demonstrates them.
+
+## Planned architecture
+
+```
+client -> nginx -> api (x3) --Lua--> Redis (holds, counters)
+                      |
+                      +--txn--> Postgres (orders + outbox_events)
+                                     |
+                         relay (SKIP LOCKED) --XADD--> Redis Stream
+                                                           |
+                                         worker (consumer group, idempotent)
+                                                           |
+                       Postgres (tickets, tier sold counters) + pub/sub -> SSE
+```
+
+## Folder layout
+
+| Folder | What goes in it |
+|---|---|
+| `app/api/` | HTTP routes, request/response schemas, error handlers |
+| `app/core/` | Settings, security, logging, typed errors |
+| `app/db/` | Postgres table models and sessions |
+| `app/redis/` | Redis client, Lua scripts and their wrappers |
+| `app/services/` | Business logic: holds, orders, events, auth |
+| `app/worker/` | Background tasks: outbox relay, stream consumer, hold sweeper |
+| `tests/` | `unit/`, `integration/`, `concurrency/`, `adversarial/` |
+| `docs/` | Design notes, learning log, glossary |
+| `learning/` | Concept primers and small runnable examples |
+
+`migrations/`, `loadtest/`, `scripts/` and `deploy/` are added in the steps
+that first need them.
+
+## Requirements
+
+Python 3.12, [uv](https://docs.astral.sh/uv/), Git and Docker Desktop.
+
+```
+uv sync
+```
+
+## Out of scope
+
+Kafka, a front-end app, microservices, real payments and Kubernetes.

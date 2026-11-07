@@ -1,0 +1,4 @@
+# Store every text file with Linux (LF) line endings, even on Windows.
+# Our code runs inside Linux containers, where Windows (CRLF) endings can
+# break shell scripts and config files.
+* text=auto eol=lf

@@ -1,0 +1,23 @@
+# Python's compiled-file caches (rebuilt automatically, never commit)
+__pycache__/
+*.pyc
+
+# Virtual environments (rebuilt by `uv sync`)
+.venv/
+.venv-*/
+
+# Secrets: only .env.example is committed (CLAUDE.md section 9)
+.env
+
+# Tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Editor and OS clutter
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
