@@ -111,3 +111,25 @@ Plain-English meanings of every technical term, with where it first appears.
 | TTL (time to live) | How long a Redis key lives before Redis deletes it automatically (`ex=10` means 10 seconds). | `check:hello` in the check script |
 | `asyncio.run` | Starts the event loop and runs one async function to completion. | `scripts/check_connections.py` |
 | `AuthenticationError` / `ConnectionError` | Redis errors for a wrong password and for "nobody is listening on that port". | The S0.7 break-it demo |
+
+## Health checks and testing (S0.8)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| Liveness check | "Is the process running?" It touches nothing else; if it fails, restart the process. | `GET /health/live` |
+| Readiness check | "Can it do real work right now?" It checks Postgres and Redis; if it fails, stop sending traffic, but don't restart. | `GET /health/ready` |
+| 503 Service Unavailable | The status code for "temporarily can't serve; try another replica or later". | `/health/ready` when a check fails |
+| Lifespan | Code that runs once at app startup (before `yield`) and shutdown (after it). | `lifespan()` in `app/main.py` |
+| `app.state` | A place on the app object to keep shared things, such as the engine and Redis client. | `app/main.py` |
+| Dependency (FastAPI) | A function named in `Depends(...)` whose result FastAPI passes into a route. Tests can override it. | `app/api/dependencies.py` |
+| Router | A group of related routes, added to the app with `include_router`. | `app/api/health.py` |
+| Response model | A pydantic class describing exactly what a response contains; nothing extra leaks out. | `LiveResponse`, `ReadyResponse` |
+| `asyncio.timeout` | Cancels the code inside it if it takes too long, raising `TimeoutError`. | `postgres_is_up`, `redis_is_up` |
+| `asyncio.gather` | Runs several async calls at the same time and waits for all of them. | `ready()` |
+| pytest | The test runner: finds `test_*` functions and reports which `assert`s fail. | `tests/` |
+| Fixture | Reusable test setup that pytest passes in by parameter name. | `client` in `test_health.py` |
+| `conftest.py` | A pytest file loaded automatically before tests; shared setup goes here. | `tests/conftest.py` |
+| monkeypatch | A pytest fixture that temporarily replaces something for one test. | Faking Redis down |
+| TestClient | Sends fake HTTP requests into the app without a real server (needs httpx). | `test_health.py` |
+| Dev dependency | A library needed only for development or testing, never shipped with the app. | `[dependency-groups] dev` in `pyproject.toml` |
+| IPv6 / `::1` | The newer internet address format; `::1` is IPv6's "this computer", like 127.0.0.1 in IPv4. | The S0.8 localhost bug |

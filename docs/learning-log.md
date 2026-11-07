@@ -14,6 +14,7 @@ checked. The teach-back for all of them happens at the end.
 - S0.5 Hello FastAPI app: built, not checked.
 - S0.6 Settings from .env: built, not checked.
 - S0.7 Docker Compose with Postgres and Redis: built, not checked.
+- S0.8 Health endpoints and first pytest: built, not checked.
 
 ## Shaky topics
 
@@ -209,5 +210,47 @@ validation, fail fast, `SecretStr`, `Literal`, `@lru_cache`.
 SQLAlchemy engine, connection pool, async Redis client, TTL.
 
 **Not yet tested automatically:** pytest arrives in S0.8.
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S0.8: Health endpoints and the first pytest (2026-11-07)
+
+**What was built:**
+- `app/main.py` has a `lifespan` that creates the engine and Redis client
+  once at startup, keeps them on `app.state`, and closes them at shutdown.
+- `app/api/dependencies.py` has `get_db_engine` and `get_redis`.
+- `app/api/health.py` has two routes:
+  - `GET /health/live` always returns `{"status":"ok"}`.
+  - `GET /health/ready` runs `SELECT 1` and `PING` concurrently, each with a
+    2s timeout. It returns 200 `ready`, or 503 `not_ready` with an
+    `ok`/`unavailable` per service. The error details go only to the log.
+- The dev dependencies `pytest` and `httpx` were added; the student approved
+  httpx, which isn't in the stack list.
+- `tests/conftest.py` points the tests at port 1. `tests/unit/test_health.py`
+  has 4 tests, and pytest is configured in `pyproject.toml`.
+
+**Ran it:**
+- `uv run python -m pytest -v` passed all 4 tests. There's 1 warning:
+  Starlette says using httpx with its TestClient is deprecated in favour of
+  `httpx2`. This was left as is for now.
+- Live against Docker: ready returned 200; with Redis stopped it returned
+  503 (`redis: unavailable`) while live stayed 200; after restarting Redis it
+  returned 200 again.
+
+**Debugging moment, a real bug found by the live demo:** `/health/ready`
+returned 503 even with both services up, because both checks hit the 2s
+timeout. On Windows, `localhost` resolves to `::1` (IPv6) first. Docker only
+listens on 127.0.0.1, and Windows takes about 2s to give up on `::1` before
+trying 127.0.0.1. Measured: `localhost` took 2.03s, `127.0.0.1` took 0.00s.
+The S0.7 check script had passed only because it had no timeout; it was
+quietly slow. Fix: both URLs in `.env.example` and `.env` now use 127.0.0.1.
+**Lesson:** mocked unit tests can't catch environment bugs; that's why we
+also run against the real services (and why integration tests come later).
+
+**Key concepts:** liveness vs readiness, 503, lifespan, `app.state`, FastAPI
+dependencies, routers, response models, timeouts, `gather`, pytest
+fixtures, conftest, monkeypatch, TestClient.
 
 **Understanding check:** deferred to the end of the project.

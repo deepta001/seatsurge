@@ -13,3 +13,14 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.1.8",
     "uvicorn>=0.54.0",
 ]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.2.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Lets tests `import app...` no matter where pytest is started from.
+pythonpath = ["."]

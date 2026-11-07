@@ -1,24 +1,48 @@
 """Creates the FastAPI application object that every API request goes through.
 
-uvicorn imports `app` from here and serves it: `uv run uvicorn app.main:app`.
+uvicorn imports `app` from here and serves it:
+`uv run python -m uvicorn app.main:app`.
 """
+
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.api.health import router as health_router
 from app.core.settings import get_settings
+from app.db.session import create_db_engine
+from app.redis.client import create_redis_client
 
 settings = get_settings()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Open shared connections once at startup and close them at shutdown.
+
+    Everything before `yield` runs when the server starts, and everything
+    after it runs when the server stops.
+    """
+    # Neither call connects yet; they only set up pools that connect on first use.
+    app.state.db_engine = create_db_engine()
+    app.state.redis = create_redis_client()
+    yield
+    await app.state.redis.aclose()
+    await app.state.db_engine.dispose()
+
 
 app = FastAPI(
     title=settings.app_name,
     description="A ticket booking backend that never oversells under heavy concurrency.",
     version="0.1.0",
+    lifespan=lifespan,
 )
+app.include_router(health_router)
 
 
 # `async def` lets the server handle other requests while this one waits on
-# slow things (databases, Redis). There's nothing to wait on yet, but every
-# route will use it later.
+# slow things (databases, Redis).
 @app.get("/")
 async def read_root() -> dict[str, str]:
     """A hello endpoint that proves the server is up."""

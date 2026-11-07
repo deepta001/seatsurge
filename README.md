@@ -47,7 +47,12 @@ uv sync
 docker compose up -d --wait        # Postgres 16 + Redis 7
 uv run python -m scripts.check_connections
 uv run python -m uvicorn app.main:app --reload
+uv run python -m pytest -v         # run the tests
 ```
+
+Health checks: `GET /health/live` (is the process up?) and `GET /health/ready`
+(can it reach Postgres and Redis? It returns 503 if not). Both are covered by
+`tests/unit/test_health.py`.
 
 Then open http://127.0.0.1:8000/docs. On Windows, use `python -m uvicorn`
 rather than `uvicorn`, because Smart App Control blocks the unsigned launcher
