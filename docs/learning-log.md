@@ -13,6 +13,7 @@ checked. The teach-back for all of them happens at the end.
 - S0.4 Repo, uv project and folder layout: built, not checked.
 - S0.5 Hello FastAPI app: built, not checked.
 - S0.6 Settings from .env: built, not checked.
+- S0.7 Docker Compose with Postgres and Redis: built, not checked.
 
 ## Shaky topics
 
@@ -173,6 +174,39 @@ from, which is why demo 4 failed outside the project folder.
 
 **Key concepts:** environment variables, `.env` vs `.env.example`,
 validation, fail fast, `SecretStr`, `Literal`, `@lru_cache`.
+
+**Not yet tested automatically:** pytest arrives in S0.8.
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S0.7: Docker Compose with Postgres and Redis (2026-11-07)
+
+**What was built:**
+- `docker-compose.yml` runs `postgres:16-alpine` and `redis:7-alpine`:
+  - The passwords come from `.env`, and Compose refuses to start if they're
+    missing.
+  - Redis has `--requirepass`.
+  - Ports are bound to 127.0.0.1 only.
+  - The Postgres data lives in the `postgres-data` named volume.
+  - Both services have healthchecks.
+- Added `sqlalchemy[asyncio]` (2.1.8, the same 2.x API as 2.0), `asyncpg` and
+  `redis` (the 8.1 client library, talking to Redis server 7.4).
+- `app/db/session.py` has `create_db_engine()`, and `app/redis/client.py`
+  has `create_redis_client()`.
+- `scripts/check_connections.py` connects to both and prints the versions.
+
+**Ran it:**
+1. `docker compose up -d --wait`: both services reported healthy.
+2. The check printed `Postgres OK: server version 16.15` and
+   `Redis OK: server version 7.4.12, read back 'world'`.
+3. Break-it, wrong Redis password: `AuthenticationError`.
+4. Break-it, Redis stopped: `ConnectionError` (connection refused).
+5. After restarting Redis, the check passed again.
+
+**Key concepts:** Compose services, volumes, port mapping, healthchecks,
+SQLAlchemy engine, connection pool, async Redis client, TTL.
 
 **Not yet tested automatically:** pytest arrives in S0.8.
 

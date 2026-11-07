@@ -91,3 +91,23 @@ Plain-English meanings of every technical term, with where it first appears.
 | `Literal` | A type hint that allows only specific values, such as `"local"`, `"test"` or `"production"`. | `Settings.environment` |
 | `@lru_cache` | A decorator that remembers a function's result, so later calls reuse it instead of redoing the work. | `get_settings()` |
 | Connection URL | A one-line address for a service: `driver://user:password@host:port/name`. | `DATABASE_URL`, `REDIS_URL` |
+
+## Infrastructure and connections (S0.7)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| Docker Compose | A tool that starts several containers together from one file (`docker compose up`). | `docker-compose.yml` |
+| Service (Compose) | One named container definition in the Compose file, such as `postgres` or `redis`. | `docker-compose.yml` |
+| Volume | Storage that outlives the container, so data survives `docker compose down`. | `postgres-data` |
+| Port mapping | Connecting a port on your computer to a port inside a container (`127.0.0.1:5432:5432`). | `docker-compose.yml` |
+| Healthcheck | A command Docker runs repeatedly to see whether a service is ready. | `pg_isready`, `redis-cli ping` |
+| Alpine image | A very small Linux base used to make images lighter (`postgres:16-alpine`). | `docker-compose.yml` |
+| SQLAlchemy | The Python library we use to talk to Postgres, through SQL text or Python classes. | `app/db/session.py` |
+| asyncpg | The fast async Postgres driver underneath SQLAlchemy (the `+asyncpg` in the URL). | `DATABASE_URL` |
+| Engine | SQLAlchemy's object that owns the connection pool to the database. | `create_db_engine()` |
+| Connection pool | A set of open connections that are reused, because opening a new one per request is slow. | `create_db_engine()`, the Redis client |
+| `pool_pre_ping` | Checks that a pooled connection still works before using it. | `app/db/session.py` |
+| redis-py (`redis.asyncio`) | The Python client library for Redis. | `app/redis/client.py` |
+| TTL (time to live) | How long a Redis key lives before Redis deletes it automatically (`ex=10` means 10 seconds). | `check:hello` in the check script |
+| `asyncio.run` | Starts the event loop and runs one async function to completion. | `scripts/check_connections.py` |
+| `AuthenticationError` / `ConnectionError` | Redis errors for a wrong password and for "nobody is listening on that port". | The S0.7 break-it demo |

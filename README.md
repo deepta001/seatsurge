@@ -42,7 +42,10 @@ that first need them.
 Python 3.12, [uv](https://docs.astral.sh/uv/), Git and Docker Desktop.
 
 ```
+cp .env.example .env               # then replace every CHANGE_ME
 uv sync
+docker compose up -d --wait        # Postgres 16 + Redis 7
+uv run python -m scripts.check_connections
 uv run python -m uvicorn app.main:app --reload
 ```
 
