@@ -5,8 +5,12 @@ uvicorn imports `app` from here and serves it: `uv run uvicorn app.main:app`.
 
 from fastapi import FastAPI
 
+from app.core.settings import get_settings
+
+settings = get_settings()
+
 app = FastAPI(
-    title="seatsurge",
+    title=settings.app_name,
     description="A ticket booking backend that never oversells under heavy concurrency.",
     version="0.1.0",
 )

@@ -75,3 +75,19 @@ Plain-English meanings of every technical term, with where it first appears.
 | OpenAPI / Swagger UI | A machine-readable description of the API (`/openapi.json`) and the interactive page built from it (`/docs`). | http://127.0.0.1:8000/docs |
 | Dependency (library) | Someone else's code our project uses, listed in `pyproject.toml` and pinned in `uv.lock`. | `pyproject.toml` |
 | Smart App Control | A Windows 11 security feature that blocks unsigned programs. It blocks the `.exe` launchers inside `.venv`, so run tools as `python -m <tool>`. | S0.5 |
+
+## Settings (S0.6)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| Environment variable | A name=value pair the operating system gives to a program when it starts. | `$env:ENVIRONMENT` |
+| `.env` file | A local, never-committed file of name=value lines holding your real settings and secrets. | Project root (gitignored) |
+| `.env.example` | The committed template for `.env`, with `CHANGE_ME` placeholders. | `.env.example` |
+| Settings | The app's configuration: database address, passwords, environment name. | `app/core/settings.py` |
+| pydantic-settings | A library that fills a typed class from environment variables and `.env`, validating each value. | `Settings` |
+| Validation | Checking that a value has the right type and form, and rejecting it with a clear error if not. | The `ValidationError` in the S0.6 demo |
+| Fail fast | Crashing immediately at startup with a clear message, rather than failing later in confusing ways. | Required `database_url` |
+| `SecretStr` | A type that hides its value when printed (`**********`), so secrets don't end up in logs. | `database_url`, `redis_url` |
+| `Literal` | A type hint that allows only specific values, such as `"local"`, `"test"` or `"production"`. | `Settings.environment` |
+| `@lru_cache` | A decorator that remembers a function's result, so later calls reuse it instead of redoing the work. | `get_settings()` |
+| Connection URL | A one-line address for a service: `driver://user:password@host:port/name`. | `DATABASE_URL`, `REDIS_URL` |
