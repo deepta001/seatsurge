@@ -18,6 +18,7 @@ checked. The teach-back for all of them happens at the end.
 - S0.9 GitHub Actions CI with ruff, mypy and pytest: built, not checked.
 - S1.1 Database models for users, events, tiers: built, not checked.
 - S1.2 Alembic and the first migration: built, not checked.
+- S1.3 Password hashing and registration (test 15): built, not checked.
 
 ## Shaky topics
 
@@ -382,5 +383,59 @@ Swapping the order fixed it.
 **Key concepts:** migrations vs create_all, revisions and their chain,
 head/base, autogenerate (a draft to review), drift and `alembic check`,
 reversible downgrades.
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S1.3: Password hashing and registration (2026-11-08)
+
+**What was built:**
+- Added `argon2-cffi`, plus the dev libraries `pytest-asyncio` and
+  `testcontainers` (all in the stack).
+- `app/core/security.py`: `hash_password` and `verify_password` (argon2id).
+- `app/core/errors.py`: `DomainError` and `UserAlreadyExists` (409).
+  `app/api/errors.py` turns DomainErrors into
+  `{"error": code, "message": safe text}`.
+- `app/db/session.py`: `create_session_factory()`. `app/main.py` creates it
+  in lifespan, and `get_db_session` gives one session per request.
+- `app/services/auth.py`: `register_user()`.
+  - It has no role parameter and always creates USER.
+  - Email is lower-cased.
+  - No check-then-insert: the UNIQUE constraint decides, and only
+    `uq_users_email` / `uq_users_username` become UserAlreadyExists.
+    Anything else re-raises.
+- `app/api/auth.py`: `POST /auth/register`.
+  - `RegisterRequest` uses `extra="forbid"` and accepts an email of the shape
+    a@b.c, a username of 3 to 50 safe characters, and a password of 12 to 128
+    characters.
+  - `UserResponse` never includes the hash.
+- Real-database tests: `tests/conftest.py` starts a testcontainers
+  Postgres 16 per run, migrates it with Alembic, overrides `get_db_session`,
+  uses httpx `ASGITransport`, and truncates the tables after each test.
+  `migrations/env.py` accepts a passed-in URL for this.
+- Tests: `tests/unit/test_security.py` (5),
+  `tests/integration/test_register.py` (6), and
+  `tests/adversarial/test_15_...` (4).
+- `docs/failure-modes.md` was started, with test 15 and the sign-up race.
+
+**Ran it:**
+- 27/27 tests passed on the first run (about 14s, including starting the
+  container). The race test released 10 sign-ups for one email at once with
+  a start barrier: exactly 1 got 201 and 9 got 409, leaving 1 row.
+- Live against the dev DB:
+  - Register: 201, with the email lower-cased.
+  - Duplicate: 409 with a clean body.
+  - `"role":"ADMIN"`: 422 `extra_forbidden`.
+  - The DB row has role USER and an `$argon2id$` hash.
+  - The demo rows were deleted afterwards.
+- A hash takes about 55 ms on this laptop (slow on purpose).
+
+**Note:** the demo user got id 2, because the rolled-back insert in S1.2
+had already used id 1. Sequences never go backwards, even on rollback.
+
+**Key concepts:** one-way hashing, argon2, salt, typed domain errors,
+DB-enforced uniqueness vs check-then-insert, sessions, integration tests
+with testcontainers, start barriers.
 
 **Understanding check:** deferred to the end of the project.

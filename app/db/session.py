@@ -1,6 +1,11 @@
-"""Creates the async SQLAlchemy engine: the app's shared pool of Postgres connections."""
+"""Creates the async SQLAlchemy engine (the pool of Postgres connections) and session factory."""
 
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 from app.core.settings import get_settings
 
@@ -15,3 +20,10 @@ def create_db_engine() -> AsyncEngine:
         # Postgres restart doesn't cause errors on the next request.
         pool_pre_ping=True,
     )
+
+
+def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
+    """A factory that makes one short-lived session (unit of work) per request."""
+    # expire_on_commit=False: after commit, objects keep their loaded values,
+    # so a route can still read user.id without another trip to the database.
+    return async_sessionmaker(engine, expire_on_commit=False)

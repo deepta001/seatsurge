@@ -61,6 +61,13 @@ Health checks: `GET /health/live` (is the process up?) and `GET /health/ready`
 (can it reach Postgres and Redis? It returns 503 if not). Both are covered by
 `tests/unit/test_health.py`.
 
+Registration: `POST /auth/register` creates a `USER` account (never an admin)
+and stores only an argon2 password hash. A duplicate email or username gets a
+409. Covered by `tests/integration/test_register.py` and adversarial test 15.
+
+The integration and adversarial tests start a throwaway Postgres in Docker
+(testcontainers), so Docker Desktop must be running for `pytest`.
+
 Then open http://127.0.0.1:8000/docs. On Windows, use `python -m uvicorn`
 rather than `uvicorn`, because Smart App Control blocks the unsigned launcher
 in `.venv\Scripts`.

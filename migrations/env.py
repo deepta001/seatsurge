@@ -28,6 +28,10 @@ target_metadata = Base.metadata
 
 
 def database_url() -> str:
+    # Tests pass a throwaway database's URL in directly; normally it comes from .env.
+    passed_in = config.get_main_option("sqlalchemy.url")
+    if passed_in:
+        return passed_in
     return get_settings().database_url.get_secret_value()
 
 

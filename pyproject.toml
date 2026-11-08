@@ -7,6 +7,7 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "alembic>=1.20.1",
+    "argon2-cffi>=25.1.0",
     "asyncpg>=0.32.0",
     "fastapi>=0.162.1",
     "pydantic-settings>=2.16.2",
@@ -20,13 +21,20 @@ dev = [
     "httpx>=0.28.1",
     "mypy>=2.4.1",
     "pytest>=9.2.0",
+    "pytest-asyncio>=1.4.1.post1",
     "ruff>=0.17.4",
+    "testcontainers>=4.15.0",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # Lets tests `import app...` no matter where pytest is started from.
 pythonpath = ["."]
+# `async def` tests run without extra markers, all sharing one event loop, so
+# the session-wide database engine can be reused by every test.
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
 
 [tool.ruff]
 line-length = 100

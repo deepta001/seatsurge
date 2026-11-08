@@ -188,3 +188,28 @@ Plain-English meanings of every technical term, with where it first appears.
 | Schema drift | When the code's models and the real database disagree. | The S1.2 break-it demo |
 | Post-write hook | A command Alembic runs on every new migration file (ruff here). | `[post_write_hooks]` in `alembic.ini` |
 | Service container (CI) | An extra container GitHub Actions runs beside the job, such as a throwaway Postgres. | `services:` in `ci.yml` |
+
+## Registration (S1.3)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| Hash (password) | A one-way scramble: it can check a password but can't be reversed into one. | `app/core/security.py` |
+| argon2 | A deliberately slow, memory-hungry password-hashing algorithm (the `argon2id` variant). | `hash_password()` |
+| Salt | Random data mixed into each hash, so equal passwords get different hashes. | Stored inside the hash string |
+| Domain error | A typed exception for an expected business failure, such as "user already exists". | `app/core/errors.py` |
+| Exception handler | Code that turns a raised exception into an HTTP response. | `app/api/errors.py` |
+| 409 Conflict | "This clashes with something that already exists." | Duplicate email or username |
+| 422 Unprocessable Entity | "The request is badly formed": wrong fields, too short, unknown keys. | Bad sign-up data |
+| `extra="forbid"` | A pydantic setting that rejects unknown fields instead of ignoring them. | `RegisterRequest` |
+| Session (SQLAlchemy) | One unit of work with the database; changes are saved together by `commit()`. | `get_db_session()` |
+| Session factory | Makes a fresh session per request. | `create_session_factory()` |
+| `IntegrityError` | SQLAlchemy's error when a database constraint rejects a write. | `register_user()` |
+| Check-then-insert race | Checking "is this free?" and then inserting, while someone else inserts in between. Avoided by letting a UNIQUE constraint decide. | `register_user()` |
+| Integration test | A test that uses real services (a real Postgres) rather than stand-ins. | `tests/integration/` |
+| Adversarial test | A test that plays the attacker or the failure, proving a protection holds. | `tests/adversarial/` |
+| testcontainers | A library that starts throwaway Docker containers (here Postgres) for tests. | `postgres_url` fixture |
+| pytest-asyncio | A pytest plugin that runs `async def` tests and fixtures. | `asyncio_mode = "auto"` |
+| `ASGITransport` | An httpx transport that calls the FastAPI app directly, with no server or port. | The `client` fixture |
+| `dependency_overrides` | FastAPI's way to swap a dependency in tests (here: the test database's session). | The `client` fixture |
+| Start barrier | Making many tasks wait on one `asyncio.Event`, then releasing them together. | The 10-signups race test |
+| TRUNCATE ... RESTART IDENTITY | Empties tables fast and resets their id counters. | After each integration test |

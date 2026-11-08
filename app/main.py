@@ -9,9 +9,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.api.auth import router as auth_router
+from app.api.errors import register_error_handlers
 from app.api.health import router as health_router
 from app.core.settings import get_settings
-from app.db.session import create_db_engine
+from app.db.session import create_db_engine, create_session_factory
 from app.redis.client import create_redis_client
 
 settings = get_settings()
@@ -24,8 +26,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     Everything before `yield` runs when the server starts, and everything
     after it runs when the server stops.
     """
-    # Neither call connects yet; they only set up pools that connect on first use.
+    # None of these connect yet; they only set up pools that connect on first use.
     app.state.db_engine = create_db_engine()
+    app.state.session_factory = create_session_factory(app.state.db_engine)
     app.state.redis = create_redis_client()
     yield
     await app.state.redis.aclose()
@@ -38,7 +41,9 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+register_error_handlers(app)
 app.include_router(health_router)
+app.include_router(auth_router)
 
 
 # `async def` lets the server handle other requests while this one waits on
