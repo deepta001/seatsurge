@@ -326,3 +326,13 @@ Plain-English meanings of every technical term, with where it first appears.
 | `MULTI` / `EXEC` | A Redis transaction: queues commands and runs them together, but can't branch on values read inside it. | Why we use Lua instead (`docs/design.md`) |
 | Snapshot assertion | Capturing state before an action and asserting it's identical after. | `snapshot()` in `test_reserve_tier.py` |
 | `Redis.from_pool` | Builds a client that owns its pool, so closing the client closes the pool. | `build_redis_client()` |
+
+## Holds over HTTP (S2.4)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| Hold | Seats reserved for one user for a few minutes, waiting to be confirmed. | `POST /events/{id}/holds` |
+| `hold_id` | A random UUID naming one hold; the client sends it back to confirm (Phase C). | Hold response |
+| 503 Service Unavailable + `Retry-After` | "Not ready right now; try again in N seconds." | `InventoryNotReady` |
+| Sellability vs availability | Whether an event *may* be sold (DB facts) vs whether seats are *left* (Redis counter). | `create_hold()` |
+| Thundering herd | Many clients hitting the same resource at the same moment, e.g. a sale opening. | The 300-buyer HTTP test |

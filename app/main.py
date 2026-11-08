@@ -14,6 +14,7 @@ from app.api.errors import register_error_handlers
 from app.api.events import router as events_router
 from app.api.events_public import router as public_events_router
 from app.api.health import router as health_router
+from app.api.holds import router as holds_router
 from app.api.me import router as me_router
 from app.core.settings import get_settings
 from app.db.session import create_db_engine, create_session_factory
@@ -50,6 +51,7 @@ app.include_router(auth_router)
 app.include_router(me_router)
 app.include_router(events_router)
 app.include_router(public_events_router)
+app.include_router(holds_router)
 
 
 # `async def` lets the server handle other requests while this one waits on

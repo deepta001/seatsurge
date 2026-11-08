@@ -14,6 +14,8 @@ from redis.asyncio import Redis
 from app.redis.keys import HOLDS_EXPIRY_KEY, hold_key, inventory_key, user_hold_key
 
 LUA_DIR = Path(__file__).parent / "lua"
+# Read once at import, not on every request.
+RESERVE_TIER_LUA = (LUA_DIR / "reserve_tier.lua").read_text()
 
 
 class ReserveOutcome(enum.Enum):
@@ -41,7 +43,7 @@ class ReserveTierScript:
     def __init__(self, redis: Redis) -> None:
         # register_script sends the script once and then calls it by its SHA
         # fingerprint (EVALSHA), re-sending it only if Redis has forgotten it.
-        self._script = redis.register_script((LUA_DIR / "reserve_tier.lua").read_text())
+        self._script = redis.register_script(RESERVE_TIER_LUA)
 
     async def __call__(self, request: HoldRequest) -> ReserveOutcome:
         if request.qty < 1:

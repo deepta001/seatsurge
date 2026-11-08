@@ -162,3 +162,17 @@ backstops, no hot rows) get their own sections when those parts are built.
   the user cap, then availability.
 - **Return codes** are mapped to a `ReserveOutcome` enum in
   `app/redis/scripts.py`, so callers never see magic numbers.
+
+### Creating a hold: Postgres for "can this be sold?", Redis for "is there room?" (S2.4)
+- `create_hold` first reads the event and tier from Postgres (published,
+  upcoming, general admission, tier belongs to event), then runs
+  `reserve_tier.lua`. Availability is **only** decided inside Redis.
+- The user comes from the token, never the request body (rule 1).
+- Outcomes become typed errors: SoldOut 409, HoldLimitExceeded 409,
+  InventoryNotReady 503 + `Retry-After` (a missing counter is never zero;
+  rebuilding it automatically is S2.8).
+- **Known cost:** two small Postgres reads per hold request. Fine for now;
+  under a heavy herd, these facts (status, seating, tier ownership) rarely
+  change and could be cached in Redis. Measure first (S8.3).
+- **Known gap until S2.7:** holds don't release their seats yet when they
+  expire or are abandoned.

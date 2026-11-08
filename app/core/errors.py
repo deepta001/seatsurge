@@ -66,3 +66,44 @@ class EventNotDeletable(DomainError):
     status_code = 409
     code = "event_not_deletable"
     message = "Only DRAFT events can be deleted; cancel a published event instead."
+
+
+class TierNotFound(DomainError):
+    status_code = 404
+    code = "tier_not_found"
+    message = "No tier with that id for this event."
+
+
+class EventNotOnSale(DomainError):
+    # Cancelled, or already started.
+    status_code = 409
+    code = "event_not_on_sale"
+    message = "This event isn't on sale."
+
+
+class SeatingNotSupported(DomainError):
+    # Reserved-seating events use per-seat holds (Phase D).
+    status_code = 422
+    code = "seating_not_supported"
+    message = "This event uses reserved seating; choose specific seats instead."
+
+
+class SoldOut(DomainError):
+    status_code = 409
+    code = "sold_out"
+    message = "Not enough seats left in this tier."
+
+
+class HoldLimitExceeded(DomainError):
+    status_code = 409
+    code = "hold_limit_exceeded"
+    message = "You're already holding the most seats allowed for this event."
+
+
+class InventoryNotReady(DomainError):
+    """The Redis seat counter is missing. Never treated as zero (CLAUDE.md rule 4)."""
+
+    status_code = 503
+    code = "inventory_not_ready"
+    message = "Seat availability is being prepared. Please try again shortly."
+    headers = {"Retry-After": "1"}

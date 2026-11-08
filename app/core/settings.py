@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     # How long a request waits for a free Redis connection before failing.
     redis_pool_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
 
+    # How long a hold keeps seats before they return to sale (CLAUDE.md rule 2).
+    hold_ttl_seconds: int = Field(default=300, ge=30, le=3600)
+    # The most seats one user may hold at once for one event.
+    hold_user_cap: int = Field(default=10, ge=1, le=100)
+
     # Signs access tokens. Anyone who knows it can forge a token for any user,
     # including an admin, so it lives only in .env. 32+ characters, so it can't
     # be guessed by brute force.

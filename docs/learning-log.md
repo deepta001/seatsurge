@@ -26,6 +26,7 @@ checked. The teach-back for all of them happens at the end.
 - S2.1 Race-condition (oversell) demo: built, not checked.
 - S2.2 Redis basics and first Lua script: built, not checked.
 - S2.3 reserve_tier.lua, wrapper and tests: built, not checked.
+- S2.4 Hold service and POST /events/{id}/holds: built, not checked.
 
 ## Shaky topics
 
@@ -794,5 +795,48 @@ also proves the pool fix.
 **Key concepts:** one script for a whole multi-key update, validate-then-
 write, return codes mapped to an enum, EVALSHA via `register_script`,
 blocking connection pools, snapshot assertions for "nothing changed".
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S2.4: Hold service and POST /events/{id}/holds (2026-11-08)
+
+**What was built:**
+- Settings: `hold_ttl_seconds` (300) and `hold_user_cap` (10).
+- Errors: TierNotFound 404, EventNotOnSale 409, SeatingNotSupported 422,
+  SoldOut 409, HoldLimitExceeded 409, and InventoryNotReady 503 with
+  `Retry-After: 1`.
+- `app/redis/scripts.py` now reads the Lua text once at import.
+- `app/services/holds.py`:
+  - `create_hold` checks the event is published, upcoming and general
+    admission, and that the tier belongs to it (Postgres).
+  - It then runs `ReserveTierScript` with a new uuid4 hold id and an expiry
+    of now + TTL.
+  - It maps each outcome to a typed error.
+- `app/api/holds.py`: `POST /events/{event_id}/holds` with body
+  `{tier_id, quantity 1-10}` (`extra="forbid"`). It needs a login and
+  returns 201 `{hold_id, event_id, tier_id, quantity, expires_at}`.
+- `tests/integration/test_holds_api.py` (10 tests), using real Postgres and
+  real Redis (`get_redis` overridden). The race test signs tokens for 300
+  made-up user ids, which works because auth is stateless.
+
+**Ran it:**
+- 104/104 tests passed; ruff and mypy are clean.
+  - The 300-buyer HTTP race gave exactly 50 x 201 and 250 x 409 sold_out,
+    with the counter at 0.
+- Live against the dev stack:
+  - Missing counter: 503 with Retry-After 1.
+  - User 1 held 2 (201). User 2 wanted 2 with 1 left: 409. User 2 took 1
+    (201). User 3: 409.
+  - Redis showed 0 left and a correct hold record.
+  - Everything was cleaned up (0 Redis keys, 0 rows).
+
+**Known gaps:** no idempotency yet (S2.5); holds don't release seats yet
+(S2.7); the counter isn't rebuilt automatically yet (S2.8).
+
+**Key concepts:** layered checks (DB for sellability, Redis for
+availability), user identity from the token only, mapping outcomes to HTTP
+status codes, 503 + Retry-After, HTTP-level concurrency tests.
 
 **Understanding check:** deferred to the end of the project.
