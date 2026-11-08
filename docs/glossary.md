@@ -336,3 +336,15 @@ Plain-English meanings of every technical term, with where it first appears.
 | 503 Service Unavailable + `Retry-After` | "Not ready right now; try again in N seconds." | `InventoryNotReady` |
 | Sellability vs availability | Whether an event *may* be sold (DB facts) vs whether seats are *left* (Redis counter). | `create_hold()` |
 | Thundering herd | Many clients hitting the same resource at the same moment, e.g. a sale opening. | The 300-buyer HTTP test |
+
+## Idempotency (S2.5)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| Idempotent | Doing it twice has the same effect as doing it once. | Retried holds |
+| `Idempotency-Key` | A client-made unique id for one attempt, resent unchanged on every retry. | Header on `POST /events/{id}/holds` |
+| Request fingerprint | A hash of what was asked, used to spot a key reused for something different. | `request_fingerprint()` |
+| `SET ... NX` | "Set only if the key doesn't exist": an atomic claim that exactly one caller wins. | `idempotency.begin()` |
+| Replay | Returning the stored answer instead of doing the work again. | `Idempotent-Replayed: true` |
+| Crash window | The gap between two steps where a crash leaves things half-done. | `docs/design.md`, S2.5 |
+| `pytest_plugins` | Loads a module of fixtures for every test. | `tests/conftest.py` -> `tests/sales.py` |

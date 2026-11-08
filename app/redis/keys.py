@@ -21,3 +21,8 @@ def hold_key(hold_id: str) -> str:
 def user_hold_key(event_id: int, user_id: int) -> str:
     """How many seats one user currently holds for one event (for the per-user cap)."""
     return f"uhold:{event_id}:{user_id}"
+
+
+def idempotency_key(user_id: int, key: str) -> str:
+    """The stored outcome of one user's request with one Idempotency-Key (24h)."""
+    return f"idem:{user_id}:{key}"

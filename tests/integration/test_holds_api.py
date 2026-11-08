@@ -1,8 +1,6 @@
 """POST /events/{id}/holds over HTTP, with a real Postgres and a real Redis."""
 
 import asyncio
-from collections.abc import AsyncIterator
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -10,75 +8,9 @@ from httpx import AsyncClient, Response
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from app.api.dependencies import get_redis
-from app.core.tokens import create_access_token
-from app.db.models import EventStatus, SeatingType, UserRole
-from app.db.session import create_session_factory
-from app.main import app
+from app.db.models import EventStatus, SeatingType
 from app.redis.keys import hold_key, inventory_key
-from app.services.auth import create_admin
-from app.services.events import EventChanges, TierSpec, create_event, update_event
-
-
-@dataclass
-class Sale:
-    event_id: int
-    tier_id: int
-    other_tier_id: int  # a tier that belongs to a different event
-
-
-def bearer(user_id: int) -> dict[str, str]:
-    # Tokens are checked without the database, so made-up user ids are fine.
-    return {"Authorization": f"Bearer {create_access_token(user_id, UserRole.USER)}"}
-
-
-async def make_event(
-    db_engine: AsyncEngine, admin_id: int, status: EventStatus, seating: SeatingType, capacity: int
-) -> tuple[int, int]:
-    async with create_session_factory(db_engine)() as session:
-        result = await create_event(
-            session,
-            created_by=admin_id,
-            name=f"{status} {seating}",
-            description=None,
-            starts_at=datetime.now(UTC) + timedelta(days=7),
-            venue="Hall",
-            city="Leeds",
-            seating=seating,
-            tiers=[TierSpec("Floor", 5000, capacity)],
-        )
-        if status != EventStatus.DRAFT:
-            await update_event(session, result.event.id, EventChanges(status=status))
-        return result.event.id, result.tiers[0].id
-
-
-@pytest.fixture
-async def sale(client: AsyncClient, redis: Redis, db_engine: AsyncEngine) -> AsyncIterator[Sale]:
-    """A published event with 50 Floor seats, its Redis counter set, and the app on test Redis."""
-    async with create_session_factory(db_engine)() as session:
-        admin = await create_admin(
-            session, email="a@example.com", username="admin", password="a long password!"
-        )
-    event_id, tier_id = await make_event(
-        db_engine, admin.id, EventStatus.PUBLISHED, SeatingType.GENERAL_ADMISSION, 50
-    )
-    _, other_tier_id = await make_event(
-        db_engine, admin.id, EventStatus.PUBLISHED, SeatingType.GENERAL_ADMISSION, 5
-    )
-    # Until S2.8 rebuilds counters automatically, tests set them up directly.
-    await redis.set(inventory_key(event_id, tier_id), 50)
-    app.dependency_overrides[get_redis] = lambda: redis
-    yield Sale(event_id, tier_id, other_tier_id)
-
-
-async def hold(
-    client: AsyncClient, sale: Sale, user_id: int = 1, quantity: int = 1, tier_id: int | None = None
-) -> Response:
-    return await client.post(
-        f"/events/{sale.event_id}/holds",
-        json={"tier_id": tier_id or sale.tier_id, "quantity": quantity},
-        headers=bearer(user_id),
-    )
+from tests.sales import Sale, bearer, hold, make_event, new_key
 
 
 async def test_a_hold_is_created_for_five_minutes(
@@ -131,7 +63,9 @@ async def test_a_missing_counter_is_503_not_sold_out(
 
 async def test_holding_requires_a_login(client: AsyncClient, sale: Sale) -> None:
     response = await client.post(
-        f"/events/{sale.event_id}/holds", json={"tier_id": sale.tier_id, "quantity": 1}
+        f"/events/{sale.event_id}/holds",
+        json={"tier_id": sale.tier_id, "quantity": 1},
+        headers={"Idempotency-Key": new_key()},
     )
     assert response.status_code == 401
 
@@ -165,7 +99,7 @@ async def test_events_that_are_not_on_sale_are_refused(
         return await client.post(
             f"/events/{event_id}/holds",
             json={"tier_id": tier_id, "quantity": 1},
-            headers=bearer(1),
+            headers={**bearer(1), "Idempotency-Key": new_key()},
         )
 
     assert (await try_hold(draft, draft_tier)).status_code == 404

@@ -27,6 +27,7 @@ checked. The teach-back for all of them happens at the end.
 - S2.2 Redis basics and first Lua script: built, not checked.
 - S2.3 reserve_tier.lua, wrapper and tests: built, not checked.
 - S2.4 Hold service and POST /events/{id}/holds: built, not checked.
+- S2.5 Idempotency-Key handling (test 6): built, not checked.
 
 ## Shaky topics
 
@@ -838,5 +839,39 @@ blocking connection pools, snapshot assertions for "nothing changed".
 **Key concepts:** layered checks (DB for sellability, Redis for
 availability), user identity from the token only, mapping outcomes to HTTP
 status codes, 503 + Retry-After, HTTP-level concurrency tests.
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S2.5: Idempotency-Key handling, test 6 (2026-11-08)
+
+**What was built:**
+- `app/services/idempotency.py`:
+  - `request_fingerprint` is SHA-256 of canonical JSON (route + body).
+  - `begin` claims with SET NX EX 30, or replays the stored answer, or raises
+    IdempotencyKeyReused (422) / RequestInProgress (409, Retry-After 1).
+  - `complete` stores `{state: done, fingerprint, status_code, body}` for
+    24 h. `abandon` deletes the claim.
+- `app/api/holds.py`: the `Idempotency-Key` header is required (8 to 100
+  characters, `[A-Za-z0-9_-]`).
+  - A replay returns the stored JSON with `Idempotent-Replayed: true`.
+  - A 4xx DomainError is stored; a 5xx error or any other exception
+    abandons the claim.
+- `app/redis/keys.py`: `idempotency_key(user, key)`.
+- Tests:
+  - The shared sale fixtures moved to `tests/sales.py` (loaded via
+    `pytest_plugins`), and the hold helper sends a fresh key.
+  - New: `tests/adversarial/test_06_same_idempotency_key_creates_one_hold.py`
+    (7 tests) and `tests/unit/test_idempotency_fingerprint.py` (2).
+
+**Ran it:**
+- 113/113 tests passed; ruff and mypy are clean.
+- Test 6 passed 5 runs in a row (it includes 10 simultaneous retries with
+  one key: exactly one hold, one seat taken).
+
+**Key concepts:** idempotency, idempotency keys, request fingerprints, SET NX
+as an atomic claim, which outcomes to store (final vs temporary), crash
+windows, at-most-once vs exactly-once thinking.
 
 **Understanding check:** deferred to the end of the project.

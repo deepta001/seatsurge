@@ -176,3 +176,26 @@ backstops, no hot rows) get their own sections when those parts are built.
   change and could be cached in Redis. Measure first (S8.3).
 - **Known gap until S2.7:** holds don't release their seats yet when they
   expire or are abandoned.
+
+### Idempotency keys for creating holds (S2.5)
+- **Chosen:** a required `Idempotency-Key` header. Redis key
+  `idem:{user}:{key}` goes through these states:
+  1. `SET ... NX EX 30` claims it ("in progress"), atomically, so exactly one
+     of several simultaneous retries does the work.
+  2. The others get 409 `request_in_progress` + `Retry-After: 1`.
+  3. On finishing, the answer is stored for 24 h with a SHA-256 fingerprint
+     of route + body.
+- **Same key + same request:** replay the stored answer (header
+  `Idempotent-Replayed: true`). **Same key + different request:** 422
+  `idempotency_key_reused`. Keys are per user.
+- **What's stored:** final answers only (201, and 4xx such as sold_out). A
+  503 or an unexpected error releases the claim, so a retry can succeed later.
+- **Known crash window:** if the process dies after the Lua script reserved
+  seats but before `complete()` stored the answer, the claim expires after
+  30 s and a retry creates a second hold. The first one isn't lost forever:
+  it expires after 5 minutes and its seats return (S2.7). Closing the window
+  fully would mean writing the idempotency record inside the Lua script
+  itself; noted as a possible improvement.
+- **Alternative considered:** storing keys in Postgres with a UNIQUE
+  constraint. That's slower on the hot path, and the hold itself lives in
+  Redis anyway.

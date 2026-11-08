@@ -24,6 +24,7 @@ try to buy the same limited seats at once.
 | Public browsing: upcoming published events, name search (wildcards escaped), city filter, capped paging; drafts are 404 | `GET /events`, `GET /events/{id}` | `tests/integration/test_events_public.py` |
 | Database rules as the source of truth: `0 <= sold <= capacity`, unique tier names, role and status CHECKs | Alembic migrations | `tests/unit/test_models.py`, CI migration checks |
 | **Holds (Phase B, in progress):** reserve 1-10 seats for 5 minutes via one atomic Redis Lua script; 409 sold_out or hold_limit_exceeded (10 per user per event); a missing counter is a 503, never zero. 300 simultaneous HTTP requests on 50 seats give exactly 50 holds | `POST /events/{id}/holds` | `tests/integration/test_holds_api.py`, `tests/integration/test_reserve_tier.py` |
+| Safe retries: a required `Idempotency-Key`; the same key replays the first answer (one hold, even for 10 simultaneous retries); the same key with a different body is a 422 | `Idempotency-Key` header | adversarial test 6 |
 
 The 84 tests (31 unit, 49 integration, 4 adversarial) run against a real
 Postgres 16 started by testcontainers. CI also applies every migration to an

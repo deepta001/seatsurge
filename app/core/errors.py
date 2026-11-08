@@ -107,3 +107,18 @@ class InventoryNotReady(DomainError):
     code = "inventory_not_ready"
     message = "Seat availability is being prepared. Please try again shortly."
     headers = {"Retry-After": "1"}
+
+
+class IdempotencyKeyReused(DomainError):
+    # Same Idempotency-Key, different request: almost certainly a client bug.
+    status_code = 422
+    code = "idempotency_key_reused"
+    message = "This Idempotency-Key was already used for a different request."
+
+
+class RequestInProgress(DomainError):
+    # A retry arrived while the first request with this key is still running.
+    status_code = 409
+    code = "request_in_progress"
+    message = "A request with this Idempotency-Key is still being processed."
+    headers = {"Retry-After": "1"}
