@@ -31,6 +31,7 @@ checked. The teach-back for all of them happens at the end.
 - S2.6 Per-user hold cap and request-size limits: built, not checked.
 - S2.7 release_hold.lua, DELETE /holds, expiry sweeper (test 5): built, not checked.
 - S2.8 Missing counter rehydrated, never zero (test 12): built, not checked.
+- S2.9 Concurrency test 1 and 3-process demo: built, not checked.
 
 ## Shaky topics
 
@@ -1001,5 +1002,52 @@ injecting time for testing, safety-net TTLs.
 thundering-herd problem on a cache miss, distributed locks with expiry,
 SET NX, choosing the safe direction when counts may be stale (under-sell,
 never over-sell).
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S2.9: The real concurrency test (test 1), compared with S2.1 (2026-11-08)
+
+**What was built:**
+- `tests/concurrency/test_01_concurrent_holds_never_oversell.py`:
+  - A start barrier and 500 HTTP buyers (1 to 4 seats each, seeded random)
+    on 50 seats.
+  - Parametrised: seeds 1 and 2 x counter present or missing.
+  - Asserts: no oversell, seats balance, refusals are exactly `sold_out`, no
+    wrongful refusals, hold records and uhold match, Postgres untouched.
+- `learning/examples/s2_9/three_replicas_demo.py`:
+  - 3 uvicorn processes, round-robin buyers, Redis and Postgres checks, and
+    the S2.1 naive comparison.
+  - A unique admin per run, cleanup in `finally`, and failures counted
+    rather than aborting the run.
+
+**Ran it:**
+- Test 1: all 4 variants passed, 3 runs in a row. Full suite 147/147.
+- **Mutation check:** with a naive check-then-take plugged in, test 1 failed:
+  `assert 52 <= 50`.
+- 3-process demo:
+  - 100 buyers / 50 seats: 50 + 50.
+  - 300 / 50: 50 + 250.
+  - **1,000 / 100: exactly 100 x 201, 900 x 409, 0 oversold.** S2.1 naive
+    right after: 103 sold (counter -3).
+
+**Debugging moments:**
+1. The first 1,000-buyer run timed out on the client (`httpx.PoolTimeout`),
+   and its cleanup then couldn't reach Redis. The leftover demo admin broke
+   the second run. Fixes: a unique admin per run, cleanup in `finally`,
+   `return_exceptions=True`, a 60 s client timeout, and the demo now takes
+   `--buyers` / `--seats`.
+2. Measured why it was slow (all ms): Redis PING 1.8, Postgres SELECT 1 2.2,
+   `/health/live` 8.8, `/health/ready` 22.8. Throughput was about 37 holds/s
+   across 3 processes. Logged in `docs/design.md` for S8.3; no performance
+   claims yet.
+
+**Phase B ("Never oversell", M2) is now built.** The phase review is next.
+
+**Key concepts:** start barriers, seeded randomness for reproducible tests,
+invariant checks across stores, mutation testing (proving a test can fail),
+replicas sharing state only through Redis and Postgres, measuring before
+optimising.
 
 **Understanding check:** deferred to the end of the project.

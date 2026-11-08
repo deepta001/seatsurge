@@ -274,3 +274,30 @@ backstops, no hot rows) get their own sections when those parts are built.
   Redis is fully flushed, the hold records are gone too, so they can't be
   subtracted. Recovery from a full flush mid-sale (counting PENDING orders
   in Postgres) is S5.1/S5.2, test 11.
+
+### Test 1 and what it proves (S2.9)
+- **The test:** a start barrier; 500 HTTP buyers wanting 1-4 seats each on
+  50 seats; two random seeds x counter present or missing.
+- **It checks:** never oversold; seats held + seats left = capacity; every
+  refusal is `sold_out` and nobody is refused while their quantity is still
+  available; one hold record per winner with the right qty and owner;
+  uhold per user; Postgres `sold` untouched.
+- **Mutation check:** swapping `ReserveTierScript` for a naive GET-then-DECRBY
+  (a throwaway pytest plugin) makes it fail with 52 of 50 seats, so the test
+  really detects overselling.
+- **3 processes:** `learning/examples/s2_9/three_replicas_demo.py` sends
+  1,000 buyers round-robin to 3 uvicorn processes on 100 seats: exactly 100
+  holds, 900 sold_out. The S2.1 naive version, run right after against the
+  same Redis, sold 103.
+
+### Performance finding to investigate in S8.3 (not yet a benchmark)
+- On this Windows laptop, with Postgres and Redis in Docker Desktop:
+  - Median Redis PING 1.8 ms; Postgres SELECT 1 2.2 ms.
+  - `GET /health/live` 8.8 ms; `/health/ready` 22.8 ms.
+- The 3-process demo handled 300 hold requests in 8.1 s and 1,000 in 18.7 s.
+  A first 1,000-buyer attempt timed out on the client side (30 s).
+- Each hold makes several sequential Redis and Postgres round trips, plus
+  framework overhead. The cause hasn't been profiled; suspects to check in
+  S8.3 are the per-request Postgres reads, Docker Desktop's port forwarding
+  on Windows, and uvicorn's pure-Python HTTP parsing. **No performance claim
+  is made until then.**

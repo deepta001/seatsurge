@@ -385,3 +385,16 @@ Plain-English meanings of every technical term, with where it first appears.
 | Distributed lock | A lock shared across processes and machines, here a Redis key with an expiry. | `lock:rehydrate:{event}:{tier}` |
 | Lock timeout | A lock frees itself after a while, so a crashed holder can't block everyone forever. | `LOCK_SECONDS = 10` |
 | Safe direction | When a count might be stale, err towards selling too few, never too many. | The `max(0, ...)` clamp; release races |
+
+## Proving it (S2.9)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| Invariant | Something that must always be true, e.g. "seats held + seats left = capacity". | Test 1's assertions |
+| Seeded randomness | Random choices from a fixed seed, so a failing run can be replayed exactly. | `random.Random(seed)` in test 1 |
+| Mutation testing | Deliberately breaking the code to prove a test notices. | The naive-reserve plugin (52 of 50) |
+| Replica | One of several identical copies of the API process. | `three_replicas_demo.py` |
+| Round-robin | Sending requests to replicas in turn: 1, 2, 3, 1, 2, 3... | The demo; nginx in S8.1 |
+| Wall time | Real elapsed time, as a clock on the wall would show. | Demo output |
+| Throughput | How many requests are completed per second. | The S2.9 performance finding |
+| Latency | How long one request takes. | `latency_probe` measurements |
