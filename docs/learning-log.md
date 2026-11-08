@@ -16,6 +16,7 @@ checked. The teach-back for all of them happens at the end.
 - S0.7 Docker Compose with Postgres and Redis: built, not checked.
 - S0.8 Health endpoints and first pytest: built, not checked.
 - S0.9 GitHub Actions CI with ruff, mypy and pytest: built, not checked.
+- S1.1 Database models for users, events, tiers: built, not checked.
 
 ## Shaky topics
 
@@ -288,5 +289,53 @@ https://github.com/deepta001/seatsurge/actions/runs/42498929501
 
 **Key concepts:** linter vs formatter vs type checker, CI, workflows / jobs /
 steps, locked installs.
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S1.1: Database models for users, events and tiers (2026-11-08)
+
+**What was built:**
+- `app/db/base.py`: `Base` (DeclarativeBase) with a constraint naming
+  convention, so names are predictable (for example
+  `ck_tiers_sold_within_capacity`).
+- `app/db/models.py`:
+  - `User`: email and username UNIQUE; `role` defaults to USER in both Python
+    and the DB; `created_at` set by the DB.
+  - `Event`: seating and status restricted; status defaults to DRAFT;
+    `created_by` is a foreign key to users with no cascade.
+  - `Tier`: UNIQUE(event_id, name); CHECKs for capacity > 0,
+    0 <= sold <= capacity (the oversell backstop), price_cents >= 0 and
+    next_number >= 0; sold and next_number default to 0.
+  - Status fields are stored as text plus a CHECK (`native_enum=False`)
+    instead of Postgres enum types, which are awkward to migrate.
+- `tests/unit/test_models.py`: 8 tests on the generated SQL, run without a
+  database.
+- `learning/examples/s1_1/constraints_demo.py`: creates the tables in a
+  throwaway schema inside one transaction, tries to break each rule, then
+  rolls back.
+- No tables exist in the real database yet; Alembic creates them in S1.2.
+
+**Ran it:**
+- 8/8 model tests passed.
+- The demo allowed selling 2 of 2 seats, then rejected each rule-break with
+  the right constraint: sold > capacity, capacity 0, a duplicate tier name, a
+  duplicate username, role SUPERADMIN, a missing creator (FK), and deleting
+  the creator (FK). The `demo_s1_1` schema was gone afterwards, and `public`
+  still has 0 tables.
+
+**Debugging moments:**
+1. Docker Desktop wasn't running after a restart (`ConnectionRefusedError`).
+   Starting it and running `docker compose up -d --wait` fixed it.
+2. A mistake in the demo itself: the setup rows were inserted with
+   hand-written `id = 1`, but the SERIAL counter didn't advance. The next
+   insert also got id 1 and hit `pk_users` / `pk_events` before the intended
+   rule. The fix was to let Postgres assign ids. Lesson: never hand-pick
+   SERIAL ids.
+
+**Key concepts:** tables, primary and foreign keys, NOT NULL, UNIQUE, CHECK,
+server defaults, transactions and rollback, savepoints, ORM models, integer
+cents, timezone-aware timestamps.
 
 **Understanding check:** deferred to the end of the project.

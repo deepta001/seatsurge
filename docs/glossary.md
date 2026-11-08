@@ -147,3 +147,27 @@ Plain-English meanings of every technical term, with where it first appears.
 | GitHub Actions | GitHub's CI service; it runs the workflow files in `.github/workflows/`. | `ci.yml` |
 | Workflow / job / step | A workflow is a CI file; a job is one machine running it; steps are the commands it runs in order. | `ci.yml` |
 | `uv sync --locked` | Installs exactly what's in `uv.lock`, and fails if the lockfile is out of date. | The CI install step |
+
+## Database models (S1.1)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| Table / row / column | A named grid of data; one record in it; one typed field. | `users`, `events`, `tiers` |
+| Primary key | The column that uniquely identifies each row (`id`). | `pk_users`, `pk_events`, `pk_tiers` |
+| SERIAL | A Postgres integer column whose value comes from an automatic counter (sequence). | Every `id` |
+| Foreign key | A column that must point at an existing row in another table. | `tiers.event_id`, `events.created_by` |
+| NOT NULL | The column must have a value. | Any `Mapped[int]` or `Mapped[str]` |
+| UNIQUE constraint | No two rows may share this value or combination. | `uq_users_email`, `uq_tiers_event_id_name` |
+| CHECK constraint | A true/false rule every row must satisfy. | `ck_tiers_sold_within_capacity` |
+| Constraint naming convention | A rule that gives every constraint a predictable name. | `NAMING_CONVENTION` in `app/db/base.py` |
+| Server default | A default value applied by the database itself, even to rows inserted outside the app. | `role DEFAULT 'USER'` |
+| Model (ORM) | A Python class that describes a table; SQLAlchemy turns it into SQL. | `User`, `Event`, `Tier` |
+| ORM | Object-relational mapper: works with rows as Python objects instead of raw SQL. | SQLAlchemy |
+| `DeclarativeBase` / metadata | The base class all models share; `metadata` is the list of every table. | `Base` in `app/db/base.py` |
+| `Mapped[...]` / `mapped_column` | SQLAlchemy 2.0's typed way to declare a column and its options. | `app/db/models.py` |
+| `StrEnum` | A Python enum whose members are also strings (`UserRole.USER == "USER"`). | `UserRole`, `SeatingType`, `EventStatus` |
+| Schema (Postgres) | A namespace inside a database that holds tables (default: `public`). | `demo_s1_1` in the S1.1 demo |
+| Rollback | Undoing every change in a transaction. | The end of the S1.1 demo |
+| Savepoint | A checkpoint inside a transaction that you can roll back to without losing everything. | `begin_nested()` in the demo |
+| Integer cents | Storing money as a whole number of cents, because floats can't represent 0.10 exactly. | `price_cents` |
+| `TIMESTAMP WITH TIME ZONE` | A date-time that is an exact moment, unaffected by the server's time zone. | `starts_at`, `created_at` |
