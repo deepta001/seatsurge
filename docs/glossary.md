@@ -268,3 +268,19 @@ Plain-English meanings of every technical term, with where it first appears.
 | `AwareDatetime` | A pydantic type that requires a time zone on date-times. | `EventCreate.starts_at` |
 | Validator | A function pydantic runs to check a field or the whole model. | `tier_names_are_unique`, `something_to_change` |
 | Parametrised test | One test function run several times with different inputs. | `test_bad_event_data_gets_422_and_nothing_is_saved` |
+
+## Browsing events (S1.7)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| Pagination | Returning a long list in pages instead of all at once. | `GET /events` |
+| `limit` / `offset` | Page size, and how many rows to skip before the page starts. | Query parameters of `GET /events` |
+| Stable ordering | Sorting with a unique tie-breaker (`id`), so the same query always gives the same order. | `order_by(Event.starts_at, Event.id)` |
+| Keyset pagination | Paging by "items after this one" instead of an offset; faster for deep pages. | `docs/design.md` (not used yet) |
+| Query parameter | A `?name=value` part of a URL. | `?city=leeds&limit=10` |
+| `ILIKE` | Postgres's case-insensitive pattern match. | Name search |
+| LIKE wildcards | `%` = any characters, `_` = any one character. | `contains_pattern()` |
+| Escaping | Marking special characters so they're treated literally. | `LIKE_ESCAPE` |
+| `func.lower` | SQL's `lower()`, used for case-insensitive comparison. | City filter |
+| `select(func.count())` | Counts matching rows in SQL instead of loading them. | `EventPage.total` |
+| Public vs internal model | Different response shapes for different audiences, so internal fields never leak. | `EventDetail` vs `EventResponse` |

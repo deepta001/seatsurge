@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from app.api.auth import router as auth_router
 from app.api.errors import register_error_handlers
 from app.api.events import router as events_router
+from app.api.events_public import router as public_events_router
 from app.api.health import router as health_router
 from app.api.me import router as me_router
 from app.core.settings import get_settings
@@ -48,6 +49,7 @@ app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(me_router)
 app.include_router(events_router)
+app.include_router(public_events_router)
 
 
 # `async def` lets the server handle other requests while this one waits on

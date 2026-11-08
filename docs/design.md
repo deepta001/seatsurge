@@ -104,3 +104,33 @@ backstops, no hot rows) get their own sections when those parts are built.
 ### Admin checks use the token's role
 - **Trade-off:** a demoted admin keeps admin rights until their access token
   expires (at most 15 minutes). The same stateless trade-off as S1.4.
+
+## Public event browsing (S1.7)
+
+### Separate public response models
+- **Chosen:** `EventSummary` (list rows, no tiers) and `EventDetail` (with
+  tiers), both without `created_by`. Admin responses keep it.
+- **Why:** CLAUDE.md section 8 says never serialise ORM objects; each
+  audience gets exactly the fields it needs.
+
+### Offset paging, with a stable order
+- **Chosen:** `limit` (1 to 100) and `offset` (0 to 10,000), plus `total`;
+  ordered by `starts_at, id`.
+- **Alternative:** keyset ("after this id") paging, which stays fast at any
+  depth.
+- **Why:** an event catalogue is small, offset paging is simple to read and
+  use, and the caps bound the cost. The `id` tie-breaker makes the order
+  deterministic, so pages never skip or repeat an event. Keyset paging can
+  replace it if the catalogue grows large.
+
+### Visibility rules
+- Lists show upcoming PUBLISHED events only. A detail page also shows
+  CANCELLED events, so ticket holders can see what happened. DRAFTs are
+  indistinguishable from nonexistent ids (both 404).
+- **Known gap:** admins can't list their drafts through the API yet; they
+  get the id when they create one.
+
+### No search index yet
+- Name search is `ILIKE '%text%'`, which scans the table. That's fine for
+  hundreds of events; a trigram (`pg_trgm`) or full-text index would be the
+  next step if the catalogue grows.

@@ -7,7 +7,7 @@ enforces the business rules, such as which status changes are allowed.
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import EventNotDeletable, EventNotFound, InvalidEventStatusChange
@@ -129,3 +129,72 @@ async def _get_locked(session: AsyncSession, event_id: int) -> Event:
 async def _tiers_of(session: AsyncSession, event_id: int) -> list[Tier]:
     result = await session.scalars(select(Tier).where(Tier.event_id == event_id).order_by(Tier.id))
     return list(result)
+
+
+# --- public reading (S1.7) -----------------------------------------------------
+
+# What the public may see: published events in lists; published or cancelled
+# on a detail page (so ticket holders can see a cancellation). Drafts never.
+PUBLICLY_VISIBLE = (EventStatus.PUBLISHED, EventStatus.CANCELLED)
+
+
+@dataclass(frozen=True)
+class EventPage:
+    events: list[Event]
+    total: int  # how many match in all, not just on this page
+
+
+def contains_pattern(text: str) -> str:
+    """Turn user text into a safe "contains" pattern for ILIKE.
+
+    In LIKE patterns, % means "anything" and _ means "any one character".
+    Escaping them makes a search for "50%" look for those literal characters
+    instead of matching every event.
+    """
+    # Escape the escape character itself first, then the two wildcards.
+    escaped = (
+        text.replace(LIKE_ESCAPE, LIKE_ESCAPE * 2)
+        .replace("%", LIKE_ESCAPE + "%")
+        .replace("_", LIKE_ESCAPE + "_")
+    )
+    return f"%{escaped}%"
+
+
+LIKE_ESCAPE = "\\"  # a single backslash (Python needs it written twice)
+
+
+async def list_upcoming_events(
+    session: AsyncSession,
+    *,
+    query: str | None,
+    city: str | None,
+    limit: int,
+    offset: int,
+    now: datetime,
+) -> EventPage:
+    """Published events that haven't started, soonest first, optionally filtered."""
+    conditions = [Event.status == EventStatus.PUBLISHED, Event.starts_at > now]
+    if query:
+        conditions.append(Event.name.ilike(contains_pattern(query), escape=LIKE_ESCAPE))
+    if city:
+        conditions.append(func.lower(Event.city) == city.strip().lower())
+
+    total = await session.scalar(select(func.count()).select_from(Event).where(*conditions))
+    # Order by starts_at, then id, so events starting at the same moment
+    # always come in the same order and paging never skips or repeats one.
+    rows = await session.scalars(
+        select(Event)
+        .where(*conditions)
+        .order_by(Event.starts_at, Event.id)
+        .limit(limit)
+        .offset(offset)
+    )
+    return EventPage(events=list(rows), total=total or 0)
+
+
+async def get_public_event(session: AsyncSession, event_id: int) -> EventWithTiers:
+    """One event with its tiers. A draft is reported as not found, as if it didn't exist."""
+    event = await session.get(Event, event_id)
+    if event is None or event.status not in PUBLICLY_VISIBLE:
+        raise EventNotFound()
+    return EventWithTiers(event=event, tiers=await _tiers_of(session, event.id))

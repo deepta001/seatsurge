@@ -22,6 +22,7 @@ checked. The teach-back for all of them happens at the end.
 - S1.4 Login, JWT access tokens and current-user dependency: built, not checked.
 - S1.5 Refresh tokens (stored, rotated, reuse detection): built, not checked.
 - S1.6 Admin-only event CRUD and seed_admin CLI: built, not checked.
+- S1.7 Paginated public event list and search: built, not checked.
 
 ## Shaky topics
 
@@ -596,3 +597,42 @@ state machines, `flush` vs `commit`, `SELECT ... FOR UPDATE`, transactions
 spanning several rows, CLIs with argparse and getpass, parametrised tests.
 
 **Understanding check:** deferred to the end of the project.
+
+---
+
+## S1.7: Paginated public event list and search (2026-11-08)
+
+**What was built:**
+- `app/services/events.py`:
+  - `list_upcoming_events`: PUBLISHED and `starts_at > now`, optional
+    `query` (ILIKE contains, escaped) and `city` (case-insensitive equality),
+    ordered by `starts_at, id`, with limit/offset plus a total count.
+  - `get_public_event`: PUBLISHED or CANCELLED; a DRAFT raises
+    EventNotFound.
+  - `contains_pattern` escapes `\`, `%` and `_`.
+- `app/api/events_public.py` (new, keeping the admin file under 200 lines):
+  - `GET /events` returns an `EventList` of `EventSummary` items with
+    total, limit and offset. Limits: limit 1 to 100, offset 0 to 10,000.
+  - `GET /events/{id}` returns an `EventDetail` with tiers and no
+    `created_by`.
+- Tests: `tests/integration/test_events_public.py` (12) and
+  `tests/unit/test_search_pattern.py` (2).
+
+**Ran it:**
+- 84/84 tests passed; ruff and mypy are clean.
+- Live: the list showed only the 2 upcoming published events, soonest
+  first. `city=leeds` filtered correctly; `query=%` returned nothing; the
+  detail page has no `created_by`; the draft gave 404. The demo rows were
+  cleaned up.
+
+**Debugging moment:** ruff W605 flagged `"\%"` in the escape helper. Writing
+the code through a shell heredoc lost one of the doubled backslashes. It
+worked by accident (Python keeps unknown escapes), but it's deprecated and
+fragile; it was rewritten with a `LIKE_ESCAPE` constant.
+
+**Key concepts:** public vs internal response models, limit/offset paging and
+stable ordering, ILIKE and wildcard escaping, visibility rules, query caps.
+
+**Understanding check:** deferred to the end of the project.
+
+**Phase A (M0 + M1) is now built.** The phase review (CLAUDE.md 0.8) is next.

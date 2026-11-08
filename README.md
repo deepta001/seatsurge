@@ -87,6 +87,11 @@ Admins can then `POST /events` (a DRAFT event with 1 to 20 price tiers),
 `DELETE /events/{id}` (DRAFT only). Regular users get 403. Covered by
 `tests/integration/test_events_admin.py` and `tests/unit/test_seed_admin.py`.
 
+Browsing (no login): `GET /events?query=jazz&city=leeds&limit=20&offset=0`
+lists upcoming published events, soonest first, with a `total`;
+`GET /events/{id}` shows one event with its tiers (drafts are 404). Covered by
+`tests/integration/test_events_public.py`.
+
 The integration and adversarial tests start a throwaway Postgres in Docker
 (testcontainers), so Docker Desktop must be running for `pytest`.
 
