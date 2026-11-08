@@ -280,8 +280,11 @@ fixtures, conftest, monkeypatch, TestClient.
   ("incompatible type 'str'; expected 'int'"). That's the bug Python itself
   only caught at runtime in S0.3.
 
-**Not verified yet:** the workflow hasn't run on GitHub itself, because
-nothing has been pushed.
+**On GitHub (2026-11-08):** the repo was pushed to
+https://github.com/deepta001/seatsurge. The push needed the student's GitHub
+sign-in through Git Credential Manager, run in their own terminal. The first CI
+run passed on commit 61dbc26:
+https://github.com/deepta001/seatsurge/actions/runs/42498929501
 
 **Key concepts:** linter vs formatter vs type checker, CI, workflows / jobs /
 steps, locked installs.
