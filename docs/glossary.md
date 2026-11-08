@@ -284,3 +284,14 @@ Plain-English meanings of every technical term, with where it first appears.
 | `func.lower` | SQL's `lower()`, used for case-insensitive comparison. | City filter |
 | `select(func.count())` | Counts matching rows in SQL instead of loading them. | `EventPage.total` |
 | Public vs internal model | Different response shapes for different audiences, so internal fields never leak. | `EventDetail` vs `EventResponse` |
+
+## Race conditions (S2.1)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| Stale read | Acting on a value that someone else has changed since you read it. | The check in the S2.1 demo |
+| Intermittent bug | A bug that only appears sometimes, depending on timing; easy to miss in testing. | Redis oversold in 11 of 13 runs |
+| `DECR` | A Redis command that subtracts 1 from a number atomically and returns the new value. | The S2.1 demo, Lua scripts later |
+| Connection pool limit | The maximum number of open connections a client keeps; extra requests must wait, or fail. | `MaxConnectionsError` in S2.1 |
+| `BlockingConnectionPool` | A redis-py pool that makes requests wait for a free connection instead of raising. | `demo_redis_client()` |
+| Lock (`asyncio.Lock`) | Lets only one task at a time run a section; only works inside one process. | Primer 11 |

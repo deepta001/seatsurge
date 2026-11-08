@@ -23,6 +23,7 @@ checked. The teach-back for all of them happens at the end.
 - S1.5 Refresh tokens (stored, rotated, reuse detection): built, not checked.
 - S1.6 Admin-only event CRUD and seed_admin CLI: built, not checked.
 - S1.7 Paginated public event list and search: built, not checked.
+- S2.1 Race-condition (oversell) demo: built, not checked.
 
 ## Shaky topics
 
@@ -680,3 +681,34 @@ an unknown email.
 - Suggested teach-back for Phase A: "Walk through what happens, layer by
   layer, from `POST /auth/login` to a successful `GET /me`, and explain why
   `/me` never queries the database."
+
+---
+
+## Phase B starts. S2.1: Race-condition demo (2026-11-08)
+
+**What was built:** `learning/examples/s2_1/oversell_demo.py`, a deliberately
+broken, throwaway script (never app code). 1,000 buyers, 100 seats, a start
+barrier, and naive check-then-take, in two versions: in memory (with a small
+`asyncio.sleep` in the gap) and against real Redis (`GET` then `DECR`).
+Primer: `learning/11-race-conditions-and-atomicity.md`.
+
+**Ran it (measured):**
+- In memory: sold 1,000 of 100, counter -900, in every run.
+- Real Redis: oversold in 11 of 13 runs, by 1 to 41 seats, and the counter
+  went negative. Two runs happened to come out right, which shows how
+  intermittent the bug is.
+- 10 buyers on 5 seats: oversold 5 in every run, in both modes.
+- 1 buyer, 1 seat: always fine.
+
+**Debugging moment:** the first Redis run crashed with
+`MaxConnectionsError: Too many connections`. redis-py's default async pool
+raises instead of waiting when 1,000 requests arrive at once. The demo now
+uses a `BlockingConnectionPool(max_connections=50)`. The app's own client
+needs the same treatment (recorded in `docs/design.md` for S2.3/S2.4).
+
+**Key concepts:** race condition, check-then-act, stale reads, intermittent
+bugs, atomicity, why per-process locks don't work across replicas.
+
+**Comfort check for Phase B:** not asked (learning deferred).
+
+**Understanding check:** deferred to the end of the project.

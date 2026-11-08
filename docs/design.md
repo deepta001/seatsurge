@@ -134,3 +134,13 @@ backstops, no hot rows) get their own sections when those parts are built.
 - Name search is `ILIKE '%text%'`, which scans the table. That's fine for
   hundreds of events; a trigram (`pg_trgm`) or full-text index would be the
   next step if the catalogue grows.
+
+## Phase B notes
+
+### The Redis client must queue for connections, not fail (found in S2.1)
+- **Found:** with the default `redis.asyncio` pool (redis-py 8.1), 1,000
+  simultaneous requests raised `MaxConnectionsError: Too many connections`.
+- **Planned fix (S2.3/S2.4):** `create_redis_client` should use a
+  `BlockingConnectionPool` with a sized `max_connections` and a wait timeout,
+  so a burst queues briefly instead of erroring. Under the thundering herd,
+  that's the difference between "a bit slower" and "errors".
