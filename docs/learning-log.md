@@ -24,6 +24,7 @@ checked. The teach-back for all of them happens at the end.
 - S1.6 Admin-only event CRUD and seed_admin CLI: built, not checked.
 - S1.7 Paginated public event list and search: built, not checked.
 - S2.1 Race-condition (oversell) demo: built, not checked.
+- S2.2 Redis basics and first Lua script: built, not checked.
 
 ## Shaky topics
 
@@ -710,5 +711,46 @@ needs the same treatment (recorded in `docs/design.md` for S2.3/S2.4).
 bugs, atomicity, why per-process locks don't work across replicas.
 
 **Comfort check for Phase B:** not asked (learning deferred).
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S2.2: Redis basics, atomic operations and a first Lua script (2026-11-08)
+
+**What was built:**
+- A hands-on `redis-cli` tour of the types CLAUDE.md section 5 uses:
+  - Counters (`SET`, `DECRBY`, `INCR`).
+  - `GET` on a missing key returns nil, not 0.
+  - TTL (`SET ... EX 2` deleted itself; `TTL` went 1, then -2).
+  - Hash (a hold record), sorted set (`ZRANGEBYSCORE` by expiry), set (a
+    duplicate is ignored; `SISMEMBER`).
+- `learning/examples/s2_2/take_seats.lua`: take N only if N are left;
+  returns 1, 0, or -2 for a missing counter.
+- Run by hand with `redis-cli --eval`:
+  - Take 2 of 3 returned 1 (1 left). Take 2 more returned 0 and changed
+    nothing.
+  - Take the last 1 returned 1 (0 left). A missing counter returned -2.
+  - Also loaded by SHA (`SCRIPT LOAD` / `EVALSHA`).
+- The S2.1 demo gained `--mode lua` (uses `register_script`), and the
+  default is now `all`.
+- Primers: `learning/10-redis-data-types-and-ttls.md` and
+  `learning/12-lua-scripts-in-redis.md`.
+
+**Ran it (measured, 1,000 buyers on 100 seats):**
+- 5 side-by-side runs: memory oversold 900 every run; naive Redis oversold
+  2 to 43; Lua sold exactly 100 with the counter at 0 every run.
+- Lua alone: 10 more runs, all exactly 100. With 5,000 buyers: 2 runs, both
+  exactly 100.
+
+**Debugging moments:**
+1. In PowerShell, `R` is a built-in alias for `Invoke-History`, so a helper
+   function named `R` never ran. The tour was moved to Bash.
+2. Git Bash rewrote `/tmp/take_seats.lua` into a Windows path before it
+   reached the container. `MSYS_NO_PATHCONV=1` fixed it.
+
+**Key concepts:** Redis data types, TTL and self-expiring keys, missing is
+not zero, single-command atomicity, Lua scripts as atomic multi-step
+operations, KEYS vs ARGV, EVAL vs EVALSHA, return codes.
 
 **Understanding check:** deferred to the end of the project.

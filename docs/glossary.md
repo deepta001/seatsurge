@@ -295,3 +295,21 @@ Plain-English meanings of every technical term, with where it first appears.
 | Connection pool limit | The maximum number of open connections a client keeps; extra requests must wait, or fail. | `MaxConnectionsError` in S2.1 |
 | `BlockingConnectionPool` | A redis-py pool that makes requests wait for a free connection instead of raising. | `demo_redis_client()` |
 | Lock (`asyncio.Lock`) | Lets only one task at a time run a section; only works inside one process. | Primer 11 |
+
+## Redis and Lua (S2.2)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| `redis-cli` | Redis's command-line client. | `docker compose exec redis redis-cli ...` |
+| `INCR` / `DECRBY` | Atomically add 1, or subtract N, from a number stored in a key. | Inventory counters |
+| `nil` | Redis's "no value": what `GET` returns for a missing key. Not the same as 0. | Rule 4, "missing is not zero" |
+| `EXPIRE` / `EX` / `TTL` | Give a key a lifetime in seconds / set it while writing / see the seconds left (-2 = gone). | Holds expire |
+| Hash (`HSET`, `HGETALL`) | A key holding named fields, like a small record. | `hold:{id}` |
+| Sorted set (`ZADD`, `ZRANGEBYSCORE`) | Unique members, each with a score, kept in score order. | `holds:expiry` |
+| Set (`SADD`, `SISMEMBER`) | Unique members with a fast "is X in it?" check. | `sold:{event}` |
+| Lua | A small scripting language that Redis can run internally. | `take_seats.lua` |
+| Lua script (Redis) | A script Redis runs as one atomic step; no other command runs mid-script. | `take_seats.lua`, `reserve_tier.lua` (S2.3) |
+| `KEYS` / `ARGV` | The keys a script touches, and its other arguments (1-indexed, strings). | Lua scripts |
+| `EVAL` / `EVALSHA` / `SCRIPT LOAD` | Run a script by its text / by its SHA fingerprint / load it to get that SHA. | S2.2 demo |
+| `register_script` | redis-py helper that loads a script and calls it by SHA. | `run_with_lua()` |
+| Return code | A number the script returns to say what happened (1 taken, 0 not enough, -2 missing). | `take_seats.lua` |

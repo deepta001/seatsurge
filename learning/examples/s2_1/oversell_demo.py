@@ -8,12 +8,15 @@ This file is a lesson, never app code (CLAUDE.md S2.1). Run from the project roo
 
     uv run python -m learning.examples.s2_1.oversell_demo
     uv run python -m learning.examples.s2_1.oversell_demo --mode redis --buyers 1000 --seats 100
+
+`--mode lua` (added in S2.2) runs the fix for comparison: one atomic Lua script.
 """
 
 import argparse
 import asyncio
 import random
 from dataclasses import dataclass
+from pathlib import Path
 
 from redis.asyncio import BlockingConnectionPool, Redis
 
@@ -87,9 +90,40 @@ async def run_against_redis(seats: int, buyers: int) -> Result:
     return Result(sold=sold, counter_after=counter_after)
 
 
+# Added in S2.2: the FIX, for comparison. The check and the take happen inside
+# one Lua script, which Redis runs as a single uninterruptible step.
+TAKE_SEATS_LUA = Path(__file__).parent.parent / "s2_2" / "take_seats.lua"
+
+
+async def run_with_lua(seats: int, buyers: int) -> Result:
+    redis = demo_redis_client()
+    take_seats = redis.register_script(TAKE_SEATS_LUA.read_text())
+    await redis.set(DEMO_KEY, seats)
+    sold = 0
+    start = asyncio.Event()
+
+    async def buy() -> None:
+        nonlocal sold
+        await start.wait()
+        if await take_seats(keys=[DEMO_KEY], args=[1]) == 1:  # check AND take, atomically
+            sold += 1
+
+    try:
+        tasks = [asyncio.create_task(buy()) for _ in range(buyers)]
+        await asyncio.sleep(0)
+        start.set()
+        await asyncio.gather(*tasks)
+        counter_after = int(await redis.get(DEMO_KEY) or 0)
+    finally:
+        await redis.delete(DEMO_KEY)
+        await redis.aclose()
+        await redis.connection_pool.disconnect()
+    return Result(sold=sold, counter_after=counter_after)
+
+
 def report(label: str, seats: int, result: Result) -> None:
     oversold = max(0, result.sold - seats)
-    verdict = "OVERSOLD!" if oversold else "ok (got lucky)"
+    verdict = "OVERSOLD!" if oversold else "ok"
     print(
         f"{label:<8} seats={seats:<4} sold={result.sold:<5} oversold={oversold:<5} "
         f"counter_after={result.counter_after:<5} {verdict}"
@@ -98,7 +132,7 @@ def report(label: str, seats: int, result: Result) -> None:
 
 async def main() -> None:
     parser = argparse.ArgumentParser(description="Watch check-then-take oversell.")
-    parser.add_argument("--mode", choices=["memory", "redis", "both"], default="both")
+    parser.add_argument("--mode", choices=["memory", "redis", "lua", "all"], default="all")
     parser.add_argument("--seats", type=int, default=100)
     parser.add_argument("--buyers", type=int, default=1000)
     parser.add_argument("--runs", type=int, default=3)
@@ -106,10 +140,12 @@ async def main() -> None:
 
     for run in range(1, args.runs + 1):
         print(f"--- run {run} ({args.buyers} buyers, 1 seat each) ---")
-        if args.mode in ("memory", "both"):
+        if args.mode in ("memory", "all"):
             report("memory", args.seats, await run_in_memory(args.seats, args.buyers))
-        if args.mode in ("redis", "both"):
+        if args.mode in ("redis", "all"):
             report("redis", args.seats, await run_against_redis(args.seats, args.buyers))
+        if args.mode in ("lua", "all"):
+            report("lua", args.seats, await run_with_lua(args.seats, args.buyers))
 
 
 if __name__ == "__main__":
