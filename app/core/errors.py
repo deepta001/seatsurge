@@ -38,3 +38,31 @@ class NotAuthenticated(DomainError):
     message = "A valid access token is required."
     # The standard HTTP hint telling clients which kind of credentials to send.
     headers = {"WWW-Authenticate": "Bearer"}
+
+
+class Forbidden(DomainError):
+    """Logged in, but not allowed to do this (e.g. a USER calling an admin route)."""
+
+    status_code = 403
+    code = "forbidden"
+    message = "You don't have permission to do that."
+
+
+class EventNotFound(DomainError):
+    status_code = 404
+    code = "event_not_found"
+    message = "No event with that id."
+
+
+class InvalidEventStatusChange(DomainError):
+    # Events only move forward: DRAFT -> PUBLISHED -> CANCELLED.
+    status_code = 409
+    code = "invalid_status_change"
+    message = "An event can't move to that status from its current one."
+
+
+class EventNotDeletable(DomainError):
+    # Once published, tickets may exist, so an event can only be cancelled.
+    status_code = 409
+    code = "event_not_deletable"
+    message = "Only DRAFT events can be deleted; cancel a published event instead."

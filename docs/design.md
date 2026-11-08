@@ -73,3 +73,34 @@ backstops, no hot rows) get their own sections when those parts are built.
 ### Tools run as `python -m <tool>` (S0.5)
 - **Why:** Windows Smart App Control blocks the unsigned `.exe` launchers
   that uv creates in `.venv\Scripts`.
+
+## Events and admins (S1.6)
+
+### Admins are created only by a CLI
+- **Chosen:** `scripts/seed_admin.py` asks for the password (or reads
+  `SEATSURGE_ADMIN_PASSWORD`). The `create_admin` service is never reachable
+  over HTTP, and `register_user` still has no role parameter.
+- **Alternative:** a default admin account, or an "is_admin" flag at sign-up.
+- **Why:** CLAUDE.md section 9 says no default credentials, and
+  self-registration must never yield an admin.
+
+### Event status is a one-way state machine, and only drafts can be deleted
+- **Chosen:** DRAFT -> PUBLISHED -> CANCELLED (CANCELLED is final). DELETE
+  only works on DRAFT events; published ones are cancelled instead.
+- **Alternative:** free status edits, and hard delete with cascade.
+- **Why:** once an event is published, tickets may exist (Phase C). Deleting
+  it would leave orphaned tickets, and re-opening a cancelled event would
+  confuse buyers who were told it's off.
+- **Concurrency:** PATCH and DELETE lock the event row (`SELECT ... FOR
+  UPDATE`) before checking the status, so two admins can't both pass the
+  check at once. This is an admin-only, rarely-written row, so locking it
+  doesn't conflict with "no hot rows" (which is about rows every order
+  touches).
+
+### Tiers can't be edited after creation (yet)
+- **Why:** changing capacity has to stay consistent with the Redis inventory
+  counters (Phase B), so tier edits wait until that exists.
+
+### Admin checks use the token's role
+- **Trade-off:** a demoted admin keeps admin rights until their access token
+  expires (at most 15 minutes). The same stateless trade-off as S1.4.

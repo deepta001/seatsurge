@@ -249,3 +249,22 @@ Plain-English meanings of every technical term, with where it first appears.
 | `ON DELETE CASCADE` | Deleting a parent row also deletes the rows that point at it. | `refresh_tokens.user_id` |
 | UUID | A 128-bit random identifier, unique without a central counter. | `family_id` |
 | 204 No Content | "Done; there's nothing to send back." | `POST /auth/logout` |
+
+## Admin event management (S1.6)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| Authentication vs authorisation | Authentication: *who are you?* (401 if unknown). Authorisation: *are you allowed?* (403 if not). | `get_current_user` vs `require_admin` |
+| 403 Forbidden | "We know who you are, but you may not do this." | A USER calling an admin route |
+| 404 Not Found | "There's nothing with that id." | `EventNotFound` |
+| CRUD | Create, Read, Update, Delete: the basic operations on a resource. | `/events` routes |
+| PATCH | An HTTP method for a partial update: send only the fields to change. | `PATCH /events/{id}` |
+| State machine | A fixed set of statuses and the allowed moves between them. | `ALLOWED_STATUS_CHANGES` |
+| `flush` vs `commit` | `flush` sends pending SQL inside the transaction (so ids exist); `commit` makes it permanent. | `create_event()` |
+| `SELECT ... FOR UPDATE` | Locks the selected rows until the transaction ends, so concurrent changes take turns. | `_get_locked()` |
+| CLI | Command-line interface: a program you run in a terminal with arguments. | `scripts/seed_admin.py` |
+| argparse | Python's standard library for reading command-line arguments. | `seed_admin.main()` |
+| getpass | Reads a password from the terminal without showing it. | `seed_admin.read_password()` |
+| `AwareDatetime` | A pydantic type that requires a time zone on date-times. | `EventCreate.starts_at` |
+| Validator | A function pydantic runs to check a field or the whole model. | `tier_names_are_unique`, `something_to_change` |
+| Parametrised test | One test function run several times with different inputs. | `test_bad_event_data_gets_422_and_nothing_is_saved` |

@@ -21,6 +21,7 @@ checked. The teach-back for all of them happens at the end.
 - S1.3 Password hashing and registration (test 15): built, not checked.
 - S1.4 Login, JWT access tokens and current-user dependency: built, not checked.
 - S1.5 Refresh tokens (stored, rotated, reuse detection): built, not checked.
+- S1.6 Admin-only event CRUD and seed_admin CLI: built, not checked.
 
 ## Shaky topics
 
@@ -542,5 +543,56 @@ current access token (it expires within 15 minutes).
 **Key concepts:** refresh vs access tokens, token rotation, token families
 and reuse detection, hashing high-entropy secrets with SHA-256, conditional
 UPDATE ... RETURNING as an atomic claim, ON DELETE CASCADE.
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S1.6: Admin-only event CRUD and the admin CLI (2026-11-08)
+
+**What was built:**
+- Errors: `Forbidden` (403), `EventNotFound` (404),
+  `InvalidEventStatusChange` (409) and `EventNotDeletable` (409).
+- `require_admin` dependency: token role must be ADMIN, with no DB query.
+- `app/services/events.py`:
+  - `create_event`: a DRAFT event plus its tiers in one transaction, using
+    `flush` to get the event id.
+  - `update_event`: partial update with one-way status rules; locks the row
+    `FOR UPDATE`.
+  - `delete_event`: DRAFT only; deletes tiers first, then the event.
+- `app/api/events.py`: `POST /events` (201), `PATCH /events/{id}` and
+  `DELETE /events/{id}` (204), with explicit request and response models.
+  - Validation: `AwareDatetime` in the future, 1 to 20 tiers with unique
+    names, capacity 1 to 100,000, `extra="forbid"`, and an empty PATCH is
+    rejected.
+- `app/services/auth.py`: `create_admin`, sharing a private `_create_user`
+  with `register_user` (which still has no role parameter).
+- `scripts/seed_admin.py`: `--email` and `--username`, a password via
+  getpass twice or `SEATSURGE_ADMIN_PASSWORD`, at least 12 characters.
+  `scripts/__init__.py` was added (mypy saw the module under two names
+  without it).
+- Tests: `tests/integration/test_events_admin.py` (17, including 7
+  parametrised validation cases) and `tests/unit/test_seed_admin.py` (3).
+
+**Ran it:**
+- 70/70 tests passed; ruff, mypy and `alembic check` are clean.
+- Live against the dev DB:
+  - The CLI created demo_admin (ADMIN), and `/me` showed role ADMIN.
+  - A regular user's POST /events got 403.
+  - The admin got 201 DRAFT, then published it.
+  - DELETE of the published event got 409 `event_not_deletable`.
+  - Cancelling worked; re-publishing got 409 `invalid_status_change`.
+  - All demo rows were deleted afterwards.
+
+**Small fixes:** mypy's "source file found twice" error (fixed by adding
+`scripts/__init__.py`), and a test patching `getpass` through the CLI module
+(now patches the `getpass` module directly).
+
+**Not yet:** public GET routes (S1.7); tier edits (they wait for Redis
+inventory).
+
+**Key concepts:** authorisation vs authentication (403 vs 401), role checks,
+state machines, `flush` vs `commit`, `SELECT ... FOR UPDATE`, transactions
+spanning several rows, CLIs with argparse and getpass, parametrised tests.
 
 **Understanding check:** deferred to the end of the project.

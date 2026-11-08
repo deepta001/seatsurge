@@ -11,8 +11,9 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from app.core.errors import NotAuthenticated
+from app.core.errors import Forbidden, NotAuthenticated
 from app.core.tokens import AccessTokenClaims, decode_access_token
+from app.db.models import UserRole
 
 # Reads "Authorization: Bearer <token>". auto_error=False lets us raise our own
 # typed error, and it also adds the "Authorize" button to /docs.
@@ -53,3 +54,16 @@ def get_current_user(
     if credentials is None:
         raise NotAuthenticated()
     return decode_access_token(credentials.credentials)
+
+
+def require_admin(
+    current_user: AccessTokenClaims = Depends(get_current_user),
+) -> AccessTokenClaims:
+    """Like get_current_user, but only lets ADMINs through (403 for everyone else).
+
+    The role comes from the token, so no database query. A just-demoted admin
+    keeps admin rights until their access token expires (at most 15 minutes).
+    """
+    if current_user.role != UserRole.ADMIN:
+        raise Forbidden()
+    return current_user

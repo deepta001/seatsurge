@@ -76,6 +76,17 @@ one revokes that login's whole token family; `POST /auth/logout` revokes it.
 Covered by `tests/integration/test_refresh.py`. Design notes are in
 `docs/design.md`.
 
+Admins and events: admins are created only from the command line:
+
+```
+uv run python -m scripts.seed_admin --email you@example.com --username you
+```
+
+Admins can then `POST /events` (a DRAFT event with 1 to 20 price tiers),
+`PATCH /events/{id}` (details, or status DRAFT -> PUBLISHED -> CANCELLED) and
+`DELETE /events/{id}` (DRAFT only). Regular users get 403. Covered by
+`tests/integration/test_events_admin.py` and `tests/unit/test_seed_admin.py`.
+
 The integration and adversarial tests start a throwaway Postgres in Docker
 (testcontainers), so Docker Desktop must be running for `pytest`.
 

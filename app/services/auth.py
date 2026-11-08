@@ -34,12 +34,23 @@ async def register_user(session: AsyncSession, *, email: str, username: str, pas
     There is deliberately no `role` parameter: self-registration can only ever
     create a USER (CLAUDE.md section 9). Admins come from a separate CLI (S1.6).
     """
+    return await _create_user(session, email, username, password, UserRole.USER)
+
+
+async def create_admin(session: AsyncSession, *, email: str, username: str, password: str) -> User:
+    """Create an ADMIN account. Only scripts/seed_admin.py calls this; no HTTP route does."""
+    return await _create_user(session, email, username, password, UserRole.ADMIN)
+
+
+async def _create_user(
+    session: AsyncSession, email: str, username: str, password: str, role: UserRole
+) -> User:
     user = User(
         # Lower-case, so "Asha@Example.com" and "asha@example.com" count as one email.
         email=email.strip().lower(),
         username=username.strip(),
         password_hash=hash_password(password),
-        role=UserRole.USER,
+        role=role,
     )
     session.add(user)
     try:
