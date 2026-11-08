@@ -73,4 +73,6 @@ async def client(db_engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
 
     # A clean slate, so no test depends on what another left behind.
     async with db_engine.begin() as connection:
-        await connection.execute(text("TRUNCATE users, events, tiers RESTART IDENTITY CASCADE"))
+        await connection.execute(
+            text("TRUNCATE users, events, tiers, refresh_tokens RESTART IDENTITY CASCADE")
+        )

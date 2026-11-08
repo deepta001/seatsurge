@@ -1,13 +1,15 @@
-"""Table models for users, events and tiers: each class describes one Postgres table.
+"""Table models (users, events, tiers, refresh tokens): each class describes one Postgres table.
 
 The constraints here are the database's own rules. They hold even if the app
 code has a bug, which is what makes the database the source of truth.
 """
 
 import enum
+import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     DateTime,
     Enum,
@@ -118,3 +120,26 @@ class Tier(Base):
     # The last ticket number handed out. Numbers are never reused, even after
     # a cancellation, so this only ever goes up.
     next_number: Mapped[int] = mapped_column(default=0, server_default="0")
+
+
+class RefreshToken(Base):
+    """One refresh token. Only its SHA-256 hash is stored, never the token itself.
+
+    All tokens descended from one login share a `family_id`. If a used token
+    is ever presented again, the whole family is revoked (theft detection).
+    """
+
+    __tablename__ = "refresh_tokens"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    # CASCADE is right here (unlike events): a deleted user's tokens are worthless.
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    # 64 hex characters = a SHA-256 digest. UNIQUE also gives the lookup index.
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    family_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Set when the token is exchanged for a new one. Single use.
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Set on logout, or for the whole family when reuse is detected.
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -232,3 +232,20 @@ Plain-English meanings of every technical term, with where it first appears.
 | User enumeration | Discovering which accounts exist from differences in an app's answers. | Login's identical 401 |
 | Timing side channel | Leaking information through how long something takes. | The dummy-hash check in `authenticate_user()` |
 | `@dataclass(frozen=True)` | A small read-only class for holding values. | `AccessTokenClaims` |
+
+## Refresh tokens (S1.5)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| Refresh token | A long-lived (7-day), single-use token whose only job is to get a new access token. | `POST /auth/refresh` |
+| Token rotation | Every use of a refresh token replaces it with a new one. | `rotate_refresh_token()` |
+| Token family | All refresh tokens descended from one login, sharing a `family_id`. | `refresh_tokens.family_id` |
+| Reuse detection | Treating a second use of an already-used token as theft and revoking its family. | `_revoke_family_if_reused()` |
+| Revocation | Making a token stop working before it expires. | `revoked_at`, `POST /auth/logout` |
+| SHA-256 | A fast one-way hash; fine for long random tokens, too fast for passwords. | `hash_refresh_token()` |
+| Entropy | How unpredictable a value is; 256 random bits can't be guessed. | `secrets.token_urlsafe(32)` |
+| `UPDATE ... RETURNING` | Change rows and get back values from exactly the rows that changed, in one statement. | Claiming a refresh token |
+| Conditional update | An UPDATE whose WHERE clause makes it apply only if the row is still in the expected state. | `WHERE used_at IS NULL ...` |
+| `ON DELETE CASCADE` | Deleting a parent row also deletes the rows that point at it. | `refresh_tokens.user_id` |
+| UUID | A 128-bit random identifier, unique without a central counter. | `family_id` |
+| 204 No Content | "Done; there's nothing to send back." | `POST /auth/logout` |

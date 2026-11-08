@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     # Short-lived on purpose: a stolen token stops working within minutes
     # (CLAUDE.md section 9). Refresh tokens (S1.5) keep users signed in.
     access_token_minutes: int = Field(default=15, gt=0, le=60)
+    # How long a refresh token stays valid if unused. Each use replaces it
+    # with a fresh one, so an active user stays signed in indefinitely.
+    refresh_token_days: int = Field(default=7, gt=0, le=90)
 
 
 @lru_cache

@@ -29,8 +29,8 @@ def check_constraint_names(table: Table) -> set[str]:
     return {str(c.name) for c in table.constraints if isinstance(c, CheckConstraint)}
 
 
-def test_all_three_tables_are_registered() -> None:
-    assert set(Base.metadata.tables) == {"users", "events", "tiers"}
+def test_all_tables_are_registered() -> None:
+    assert set(Base.metadata.tables) == {"users", "events", "tiers", "refresh_tokens"}
 
 
 def test_user_email_and_username_are_unique() -> None:

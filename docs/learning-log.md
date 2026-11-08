@@ -20,6 +20,7 @@ checked. The teach-back for all of them happens at the end.
 - S1.2 Alembic and the first migration: built, not checked.
 - S1.3 Password hashing and registration (test 15): built, not checked.
 - S1.4 Login, JWT access tokens and current-user dependency: built, not checked.
+- S1.5 Refresh tokens (stored, rotated, reuse detection): built, not checked.
 
 ## Shaky topics
 
@@ -491,5 +492,55 @@ works until it expires (at most 15 minutes).
 **Key concepts:** JWT structure, signing vs encrypting, claims (`sub`, `exp`,
 `iat`), algorithm pinning, bearer auth, stateless auth and its trade-off,
 user-enumeration defence, timing side channels.
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S1.5: Refresh tokens (2026-11-08)
+
+**Decision (the student chose it):** stored, rotated refresh tokens with
+reuse detection, rather than a stateless JWT refresh. This adds a
+`refresh_tokens` table that isn't in the CLAUDE.md schema; it's recorded in
+`docs/design.md`.
+
+**What was built:**
+- `RefreshToken` model, plus migration `7e7b636c3319`:
+  - Columns: id (bigint), user_id (FK, CASCADE, indexed), token_hash
+    (UNIQUE, 64), family_id (uuid, indexed), expires_at, created_at,
+    used_at, revoked_at.
+- Setting: `refresh_token_days` (default 7).
+- `app/services/refresh_tokens.py`:
+  - `issue_refresh_token` creates a new family.
+  - `rotate_refresh_token` claims the token with one conditional UPDATE ...
+    RETURNING, re-reads the user, and issues a replacement in the same
+    family. On failure it revokes the family if the token had been used.
+  - `revoke_refresh_token_family` handles logout.
+- Routes:
+  - `/auth/login` now also returns `refresh_token` and `refresh_expires_in`.
+  - New `POST /auth/refresh`.
+  - New `POST /auth/logout` (always 204).
+- `tests/integration/test_refresh.py` (10 tests), including reuse detection,
+  expiry, logout, a role change at refresh, and a 5-way race. The test
+  cleanup also truncates `refresh_tokens`.
+- `docs/design.md` was started, with all decisions so far.
+
+**Ran it:**
+- 51/51 tests passed (the race gave exactly [200, 401, 401, 401, 401]).
+  ruff, mypy and `alembic check` are clean.
+- Live: R1 → R2 → R3 refreshed fine. Replaying R1 gave 401, and R3 then gave
+  401 too. The DB showed all 3 rows in one family marked revoked. Deleting
+  the demo user cascaded its tokens (0 rows left).
+
+**Small fixes:** a docstring 1 character too long, and the test helper was
+typed `dict[str, str]` although the response holds a number (mypy caught
+it).
+
+**Known gaps:** no cleanup of old token rows yet; logout doesn't end the
+current access token (it expires within 15 minutes).
+
+**Key concepts:** refresh vs access tokens, token rotation, token families
+and reuse detection, hashing high-entropy secrets with SHA-256, conditional
+UPDATE ... RETURNING as an atomic claim, ON DELETE CASCADE.
 
 **Understanding check:** deferred to the end of the project.

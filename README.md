@@ -70,6 +70,12 @@ routes (so far `GET /me`) read it from `Authorization: Bearer <token>` without
 a database query. Covered by `tests/unit/test_tokens.py`,
 `tests/unit/test_me.py` and `tests/integration/test_login.py`.
 
+Refresh: login also returns a 7-day, single-use refresh token (stored only as
+a SHA-256 hash). `POST /auth/refresh` swaps it for a new pair; replaying a used
+one revokes that login's whole token family; `POST /auth/logout` revokes it.
+Covered by `tests/integration/test_refresh.py`. Design notes are in
+`docs/design.md`.
+
 The integration and adversarial tests start a throwaway Postgres in Docker
 (testcontainers), so Docker Desktop must be running for `pytest`.
 

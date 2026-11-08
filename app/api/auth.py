@@ -1,4 +1,4 @@
-"""Account routes: POST /auth/register and POST /auth/login. Refresh tokens come in S1.5."""
+"""Account routes: register, login, refresh and logout under /auth."""
 
 from datetime import datetime
 from typing import Literal
@@ -10,8 +10,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import get_db_session
 from app.core.settings import get_settings
 from app.core.tokens import create_access_token
-from app.db.models import UserRole
+from app.db.models import User, UserRole
 from app.services.auth import authenticate_user, register_user
+from app.services.refresh_tokens import (
+    issue_refresh_token,
+    revoke_refresh_token_family,
+    rotate_refresh_token,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -68,16 +73,52 @@ class LoginRequest(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: Literal["bearer"] = "bearer"
-    expires_in: int  # seconds until the token stops working
+    expires_in: int  # seconds until the access token stops working
+    # Single use: send it to POST /auth/refresh and you get a replacement.
+    refresh_token: str
+    refresh_expires_in: int  # seconds until the refresh token expires if unused
+
+
+class RefreshRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    refresh_token: str = Field(min_length=1, max_length=200)
+
+
+def token_response(user: User, refresh_token: str) -> TokenResponse:
+    settings = get_settings()
+    return TokenResponse(
+        access_token=create_access_token(user.id, user.role),
+        expires_in=settings.access_token_minutes * 60,
+        refresh_token=refresh_token,
+        refresh_expires_in=settings.refresh_token_days * 24 * 60 * 60,
+    )
 
 
 @router.post("/login")
 async def login(
     body: LoginRequest, session: AsyncSession = Depends(get_db_session)
 ) -> TokenResponse:
-    """Swap a correct email and password for a short-lived access token."""
+    """Swap a correct email and password for an access token and a refresh token."""
     user = await authenticate_user(session, email=body.email, password=body.password)
-    return TokenResponse(
-        access_token=create_access_token(user.id, user.role),
-        expires_in=get_settings().access_token_minutes * 60,
-    )
+    refresh_token = await issue_refresh_token(session, user.id)
+    return token_response(user, refresh_token)
+
+
+@router.post("/refresh")
+async def refresh(
+    body: RefreshRequest, session: AsyncSession = Depends(get_db_session)
+) -> TokenResponse:
+    """Spend a refresh token for a new pair. Each refresh token works exactly once."""
+    rotation = await rotate_refresh_token(session, body.refresh_token)
+    return token_response(rotation.user, rotation.refresh_token)
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(body: RefreshRequest, session: AsyncSession = Depends(get_db_session)) -> None:
+    """End this login: its refresh tokens stop working. Always 204, even for unknown tokens.
+
+    The current access token keeps working until it expires (at most 15
+    minutes), because access tokens are checked without the database.
+    """
+    await revoke_refresh_token_family(session, body.refresh_token)

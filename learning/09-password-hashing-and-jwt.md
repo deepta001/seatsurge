@@ -94,3 +94,37 @@ hash). Measured live: 73 ms vs 74 ms.
 
 Open http://127.0.0.1:8000/docs, log in with `POST /auth/login`, click
 **Authorize**, paste the `access_token`, and call `GET /me`.
+
+---
+
+# Part 3: Refresh tokens (S1.5)
+
+**Analogy:** a refresh token is a cloakroom ticket. Hand it in and you get
+your coat (a new access token) **plus a new ticket**; the old ticket is
+torn up. If someone later shows up with a torn-up ticket, the cloakroom knows
+a copy was made and cancels every ticket from that visit.
+
+## The flow
+
+```
+login              -> access A1 (15 min) + refresh R1 (7 days)
+refresh R1         -> access A2 + refresh R2      (R1 marked used)
+refresh R2         -> access A3 + refresh R3
+refresh R1 again   -> 401, and R2 and R3 are revoked too (reuse = theft)
+logout R3          -> R3's whole family is revoked
+```
+
+## Why each piece
+
+- **Random, not a JWT:** it has to be looked up and revoked anyway, so
+  there's no point making it self-describing.
+- **Stored as a SHA-256 hash:** a database leak doesn't hand out working
+  tokens.
+- **Rotation (single use):** a leaked token is only useful until its owner
+  next refreshes.
+- **Family revocation on reuse:** if both the thief and the real user hold
+  copies, whoever goes second triggers it, and both must log in again.
+- **One conditional UPDATE to claim a token:** of 5 simultaneous refreshes
+  with the same token, exactly one wins (tested).
+- **Refresh reads the user from the DB:** a role change takes effect at the
+  next refresh, within 15 minutes.
