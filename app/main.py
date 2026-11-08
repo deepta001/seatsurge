@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.auth import router as auth_router
+from app.api.body_limit import BodySizeLimitMiddleware
 from app.api.errors import register_error_handlers
 from app.api.events import router as events_router
 from app.api.events_public import router as public_events_router
@@ -46,6 +47,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 register_error_handlers(app)
+# Outermost layer: oversized bodies are refused before any route reads them.
+app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_body_bytes)
 app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(me_router)

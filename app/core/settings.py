@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     # The most seats one user may hold at once for one event.
     hold_user_cap: int = Field(default=10, ge=1, le=100)
 
+    # The largest request body the API will read. Every real request here is a
+    # few hundred bytes; anything bigger is a mistake or an attack.
+    max_request_body_bytes: int = Field(default=16 * 1024, ge=1024, le=1024 * 1024)
+
     # Signs access tokens. Anyone who knows it can forge a token for any user,
     # including an admin, so it lives only in .env. 32+ characters, so it can't
     # be guessed by brute force.

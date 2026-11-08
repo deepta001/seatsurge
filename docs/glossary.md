@@ -348,3 +348,15 @@ Plain-English meanings of every technical term, with where it first appears.
 | Replay | Returning the stored answer instead of doing the work again. | `Idempotent-Replayed: true` |
 | Crash window | The gap between two steps where a crash leaves things half-done. | `docs/design.md`, S2.5 |
 | `pytest_plugins` | Loads a module of fixtures for every test. | `tests/conftest.py` -> `tests/sales.py` |
+
+## Request limits (S2.6)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| Middleware | Code that wraps every request before (and after) it reaches the routes. | `BodySizeLimitMiddleware` |
+| ASGI | The standard interface between async Python web servers (uvicorn) and apps (FastAPI): `scope`, `receive`, `send`. | `app/api/body_limit.py` |
+| `Content-Length` | A header saying how many bytes the body has; clients can lie or leave it out. | The middleware's first check |
+| Chunked transfer | Sending a body in pieces without declaring its total size up front. | `test_a_chunked_body_with_no_length_...` |
+| 413 Payload Too Large | "Your request body is bigger than I accept." | `payload_too_large` |
+| Denial of service (DoS) | Making a service unusable by overloading it, e.g. with huge requests. | Why bodies are capped |
+| Defence in depth | Several independent protections, so one gap doesn't break everything. | Field limits + body cap + Redis cap |

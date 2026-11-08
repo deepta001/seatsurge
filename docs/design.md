@@ -199,3 +199,23 @@ backstops, no hot rows) get their own sections when those parts are built.
 - **Alternative considered:** storing keys in Postgres with a UNIQUE
   constraint. That's slower on the hot path, and the hold itself lives in
   Redis anyway.
+
+### Request limits (S2.6)
+- **Per hold:** 1 to 10 seats (`HoldCreate.quantity`, 422 otherwise).
+- **Per user per event:** at most `HOLD_USER_CAP` (10) seats held at once,
+  enforced **inside** `reserve_tier.lua` against `uhold:{event}:{user}`, so
+  simultaneous requests can't add up past it (tested: 20 x 1 seat gives 10;
+  8 x 3 seats gives 9; 3 x 10 seats gives 10).
+- **Per request body:** `MAX_REQUEST_BODY_BYTES` (16 KB), via
+  `BodySizeLimitMiddleware`, the outermost layer. It refuses a declared
+  oversized `Content-Length` (or a non-numeric one) immediately, and reads
+  chunked bodies itself, stopping at the limit. 413 `payload_too_large`.
+  - **Why read the body in the middleware:** the first version raised an
+    error from inside FastAPI's body reading, and FastAPI turned it into a
+    generic 400. Reading (at most 16 KB) first, then replaying it, keeps the
+    decision outside FastAPI.
+- **Not yet:** limits on how *often* a user can call (rate limiting, S7.1);
+  nginx's `client_max_body_size` will add the same limit at the edge (S8.1).
+- **To decide in S2.7:** `uhold` currently has no TTL. If releases ever fail,
+  a user could stay stuck at the cap. The sweeper and release script must
+  decrement it, and must never let it go below 0.

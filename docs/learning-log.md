@@ -28,6 +28,7 @@ checked. The teach-back for all of them happens at the end.
 - S2.3 reserve_tier.lua, wrapper and tests: built, not checked.
 - S2.4 Hold service and POST /events/{id}/holds: built, not checked.
 - S2.5 Idempotency-Key handling (test 6): built, not checked.
+- S2.6 Per-user hold cap and request-size limits: built, not checked.
 
 ## Shaky topics
 
@@ -873,5 +874,42 @@ status codes, 503 + Retry-After, HTTP-level concurrency tests.
 **Key concepts:** idempotency, idempotency keys, request fingerprints, SET NX
 as an atomic claim, which outcomes to store (final vs temporary), crash
 windows, at-most-once vs exactly-once thinking.
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S2.6: Per-user hold cap and request-size limits (2026-11-08)
+
+**What was built:**
+- `app/api/body_limit.py`: `BodySizeLimitMiddleware` (raw ASGI), added as
+  the outermost middleware.
+  - A declared Content-Length that is too big or not a number gets 413 at
+    once.
+  - Otherwise it reads the body itself, stops past the limit, and replays
+    the body to FastAPI as one message.
+- New setting: `max_request_body_bytes` (16 KB).
+- Tests:
+  - `tests/unit/test_body_limit.py` (4): declared oversized, chunked with no
+    length, garbage Content-Length, and a normal body still gets through.
+  - `tests/concurrency/test_user_hold_cap.py` (3 parametrised cases): one
+    user firing 20 x 1, 8 x 3 or 3 x 10 seats at once ends at exactly 10, 9
+    and 10 held. Every refusal is `hold_limit_exceeded`, and Redis agrees.
+
+**Ran it:**
+- 120/120 tests passed; the concurrency tests passed 3 runs in a row; ruff
+  and mypy are clean.
+- Live with uvicorn: a 200-byte body reached validation (422); a 1 MB body
+  got 413 in 1 ms.
+
+**Debugging moment:** the first middleware raised its "too large" signal
+from inside the app's `receive()`. FastAPI wraps body parsing in a broad
+`except` and turned it into a 400 "error parsing the body". The redesign
+reads the body in the middleware first (it's at most 16 KB) and replays it,
+so the 413 decision never passes through FastAPI.
+
+**Key concepts:** ASGI middleware, the receive/send messages, Content-Length
+vs chunked transfer, 413 Payload Too Large, defence in depth (pydantic field
+limits plus a body cap plus the atomic cap in Redis).
 
 **Understanding check:** deferred to the end of the project.
