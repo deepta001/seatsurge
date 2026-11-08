@@ -5,10 +5,12 @@
 
 import asyncio
 
+import pytest
 from httpx import AsyncClient, Response
 from redis.asyncio import Redis
 
-from app.redis.keys import HOLDS_EXPIRY_KEY, inventory_key
+from app.redis import rehydrate
+from app.redis.keys import HOLDS_EXPIRY_KEY, inventory_key, rehydrate_lock_key
 from tests.sales import Sale, bearer, hold, new_key
 
 
@@ -97,12 +99,17 @@ async def test_a_final_refusal_is_replayed_too(
 
 
 async def test_a_temporary_503_is_not_stored_so_a_retry_can_succeed(
-    client: AsyncClient, redis: Redis, sale: Sale
+    client: AsyncClient, redis: Redis, sale: Sale, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Make a genuine 503: the counter is missing and another process holds the
+    # rebuild lock without finishing (see adversarial test 12).
+    monkeypatch.setattr(rehydrate, "WAIT_SECONDS", 0.2)
+    lock = rehydrate_lock_key(sale.event_id, sale.tier_id)
     await redis.delete(inventory_key(sale.event_id, sale.tier_id))
+    await redis.set(lock, "someone-else", ex=10)
     key = new_key()
     first = await hold(client, sale, key=key)
-    await redis.set(inventory_key(sale.event_id, sale.tier_id), 50)
+    await redis.delete(lock)  # the stuck rebuilder goes away
 
     retry = await hold(client, sale, key=key)
 

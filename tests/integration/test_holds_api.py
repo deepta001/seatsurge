@@ -49,16 +49,17 @@ async def test_the_per_user_cap_of_10_spans_several_holds(client: AsyncClient, s
     assert response.json()["error"] == "hold_limit_exceeded"
 
 
-async def test_a_missing_counter_is_503_not_sold_out(
+async def test_a_missing_counter_is_rebuilt_and_the_hold_succeeds(
     client: AsyncClient, redis: Redis, sale: Sale
 ) -> None:
+    # Before S2.8 this was a 503; now the counter is rebuilt from the database.
+    # (The 503 fallback and the rebuild rules are covered by adversarial test 12.)
     await redis.delete(inventory_key(sale.event_id, sale.tier_id))
 
     response = await hold(client, sale)
 
-    assert response.status_code == 503
-    assert response.json()["error"] == "inventory_not_ready"
-    assert response.headers["Retry-After"] == "1"
+    assert response.status_code == 201
+    assert await redis.get(inventory_key(sale.event_id, sale.tier_id)) == "49"
 
 
 async def test_holding_requires_a_login(client: AsyncClient, sale: Sale) -> None:

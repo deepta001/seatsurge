@@ -26,3 +26,8 @@ def user_hold_key(event_id: int, user_id: int) -> str:
 def idempotency_key(user_id: int, key: str) -> str:
     """The stored outcome of one user's request with one Idempotency-Key (24h)."""
     return f"idem:{user_id}:{key}"
+
+
+def rehydrate_lock_key(event_id: int, tier_id: int) -> str:
+    """Held by whichever process is rebuilding this tier's missing counter."""
+    return f"lock:rehydrate:{event_id}:{tier_id}"

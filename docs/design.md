@@ -249,3 +249,28 @@ backstops, no hot rows) get their own sections when those parts are built.
 - Safe to run several copies at once (idempotent releases). A failed pass
   is logged and retried next tick; it never stops the loop.
 - Measured live: a 30-second hold was released within 0.3 s of its expiry.
+
+### Rehydrating a missing counter, single-flight (S2.8)
+- **When:** `reserve_tier.lua` returns NOT_INITIALISED. `create_hold` calls
+  `rehydrate_tier`, then retries the reservation once (the first attempt
+  wrote nothing, so the same hold id is reused).
+- **Formula:** `capacity - sold (Postgres) - seats in HELD/CONFIRMING holds
+  (Redis) - seats in PENDING orders (Phase C; 0 for now)`, clamped at 0.
+- **Single-flight:** redis-py's `Lock` (`lock:rehydrate:{event}:{tier}`,
+  10 s timeout, non-blocking acquire). One process rebuilds. Others poll for
+  the counter for up to 2 s, then fall back to 503 `inventory_not_ready`.
+  The value is written with `SET NX`, so it can't overwrite a counter that
+  appeared meanwhile. Measured: 50 simultaneous requests caused exactly 1
+  rebuild and 25 two-seat holds on 50 seats.
+- **Why not "missing = 0" or "missing = capacity":** shown live. Zero
+  wrongly sells out; capacity oversells (7 held + 10 = 17 of 10 seats).
+- **Races, and why they're safe:** no new holds can be created while the
+  counter is missing, because every reserve returns NOT_INITIALISED. A hold
+  released *during* the rebuild may already have been counted as active,
+  which **under**-counts (seats temporarily unsellable). That's the safe
+  direction; the admin reconcile (S5.1) corrects it.
+- **Known costs and gaps:** counting active holds walks all of
+  `holds:expiry` (fine at this scale; a per-tier index would fix it). If
+  Redis is fully flushed, the hold records are gone too, so they can't be
+  subtracted. Recovery from a full flush mid-sale (counting PENDING orders
+  in Postgres) is S5.1/S5.2, test 11.

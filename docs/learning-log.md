@@ -30,6 +30,7 @@ checked. The teach-back for all of them happens at the end.
 - S2.5 Idempotency-Key handling (test 6): built, not checked.
 - S2.6 Per-user hold cap and request-size limits: built, not checked.
 - S2.7 release_hold.lua, DELETE /holds, expiry sweeper (test 5): built, not checked.
+- S2.8 Missing counter rehydrated, never zero (test 12): built, not checked.
 
 ## Shaky topics
 
@@ -960,5 +961,45 @@ limits plus a body cap plus the atomic cap in Redis).
 **Key concepts:** idempotent operations, state machines (HELD -> RELEASED /
 EXPIRED), sweepers and background workers, sorted sets as time indexes,
 injecting time for testing, safety-net TTLs.
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S2.8: A missing counter is rehydrated, never zero, test 12 (2026-11-08)
+
+**What was built:**
+- `app/redis/rehydrate.py`:
+  - `seats_in_active_holds` scans `holds:expiry` for HELD/CONFIRMING holds
+    on the tier.
+  - `compute_available` = capacity - sold - held - pending (0 until Phase
+    C), clamped at 0.
+  - `rehydrate_tier` takes redis-py's `Lock` (10 s, non-blocking), re-checks
+    under the lock, writes with SET NX and releases the lock. Requests that
+    didn't get the lock poll for up to 2 s.
+- `app/redis/keys.py`: `rehydrate_lock_key`.
+- `app/services/holds.py`: on NOT_INITIALISED, rehydrate, then retry once;
+  503 only if that fails.
+- Tests:
+  - New: `tests/adversarial/test_12_missing_counter_is_rehydrated.py` (5).
+  - The old "missing counter gives 503" test now expects the rebuild.
+  - The test 6 "503 isn't stored" case now makes a real 503 by holding the
+    rebuild lock.
+
+**Ran it:**
+- 143/143 tests passed; test 12 passed 3 runs in a row; ruff and mypy are
+  clean.
+- 50 simultaneous requests on a missing counter: 1 rebuild, 25 x 201 (2
+  seats each), the rest sold_out, and the counter ends at 0.
+- Live break-it demo (capacity 10, holds of 4 + 3, counter deleted):
+  - "Missing = 0" would wrongly sell out.
+  - "Reset to capacity" would oversell (17 of 10).
+  - The rebuild computed 3 (correct), and the next real hold triggered it
+    automatically.
+
+**Key concepts:** cache rebuild (rehydration), single-flight and the
+thundering-herd problem on a cache miss, distributed locks with expiry,
+SET NX, choosing the safe direction when counts may be stale (under-sell,
+never over-sell).
 
 **Understanding check:** deferred to the end of the project.

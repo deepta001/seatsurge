@@ -24,6 +24,7 @@ from app.core.errors import (
 )
 from app.core.settings import get_settings
 from app.db.models import Event, EventStatus, SeatingType, Tier
+from app.redis.rehydrate import rehydrate_tier
 from app.redis.scripts import (
     HoldRequest,
     HoldStatus,
@@ -60,26 +61,32 @@ async def create_hold(
     settings = get_settings()
     hold_id = str(uuid.uuid4())
     expires_at = now + timedelta(seconds=settings.hold_ttl_seconds)
-    outcome = await ReserveTierScript(redis)(
-        HoldRequest(
-            hold_id=hold_id,
-            event_id=event_id,
-            tier_id=tier_id,
-            user_id=user_id,
-            qty=quantity,
-            expires_at_ms=int(expires_at.timestamp() * 1000),
-            ttl_seconds=settings.hold_ttl_seconds,
-            user_cap=settings.hold_user_cap,
-        )
+    reserve = ReserveTierScript(redis)
+    request = HoldRequest(
+        hold_id=hold_id,
+        event_id=event_id,
+        tier_id=tier_id,
+        user_id=user_id,
+        qty=quantity,
+        expires_at_ms=int(expires_at.timestamp() * 1000),
+        ttl_seconds=settings.hold_ttl_seconds,
+        user_cap=settings.hold_user_cap,
     )
+    outcome = await reserve(request)
+
+    if outcome == ReserveOutcome.NOT_INITIALISED:
+        # A missing counter is never zero (rule 4): rebuild it from the
+        # database (one process at a time), then try exactly once more.
+        # The first attempt wrote nothing, so reusing the hold id is safe.
+        if await rehydrate_tier(session, redis, event_id, tier_id):
+            outcome = await reserve(request)
 
     if outcome == ReserveOutcome.SOLD_OUT:
         raise SoldOut()
     if outcome == ReserveOutcome.USER_CAP_EXCEEDED:
         raise HoldLimitExceeded()
     if outcome == ReserveOutcome.NOT_INITIALISED:
-        # Never treat a missing counter as zero (rule 4). Rebuilding it from
-        # the database on demand arrives in S2.8; until then, "try again".
+        # The rebuild didn't finish in time: still never "zero", just "retry".
         raise InventoryNotReady()
     return Hold(hold_id, event_id, tier_id, quantity, expires_at)
 

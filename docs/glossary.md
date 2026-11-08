@@ -373,3 +373,15 @@ Plain-English meanings of every technical term, with where it first appears.
 | `ZREM` | Remove a member from a sorted set. | Releasing a hold |
 | Safety-net TTL | An expiry that cleans up if normal cleanup ever fails. | `uhold` EXPIRE |
 | Time injection | Passing "now" into code, so tests can jump ahead instead of waiting. | `sweep_expired_holds(now=...)` |
+
+## Rehydration (S2.8)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| Rehydrate | Rebuild a missing cached value (the Redis counter) from the source of truth (Postgres + active holds). | `app/redis/rehydrate.py` |
+| Cache miss | Looking for a cached value that isn't there. | NOT_INITIALISED from `reserve_tier.lua` |
+| Cache stampede | Many requests all rebuilding the same missing value at once. | Prevented by the rebuild lock |
+| Single-flight | Only one caller does an expensive job; the others wait for its result. | `rehydrate_tier()` |
+| Distributed lock | A lock shared across processes and machines, here a Redis key with an expiry. | `lock:rehydrate:{event}:{tier}` |
+| Lock timeout | A lock frees itself after a while, so a crashed holder can't block everyone forever. | `LOCK_SECONDS = 10` |
+| Safe direction | When a count might be stale, err towards selling too few, never too many. | The `max(0, ...)` clamp; release races |
