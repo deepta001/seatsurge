@@ -636,3 +636,47 @@ stable ordering, ILIKE and wildcard escaping, visibility rules, query caps.
 **Understanding check:** deferred to the end of the project.
 
 **Phase A (M0 + M1) is now built.** The phase review (CLAUDE.md 0.8) is next.
+
+---
+
+## Phase A review: accounts and events (2026-11-08)
+
+**Done (CLAUDE.md 0.8):**
+1. **Demo:** a 16-step end-to-end run over real HTTP against Docker Postgres
+   and Redis:
+   - Readiness check 200.
+   - Asking for ADMIN at sign-up: 422. Normal sign-up: 201 as USER, with
+     the email lower-cased.
+   - Wrong password: 401. Login: 200 (900 s). `/me`: 200.
+   - A user creating an event: 403. An admin: 201 DRAFT.
+   - Public GET of the draft: 404. After publishing, search finds it, and
+     the detail page shows both tiers.
+   - Refresh: 200. Replaying the old token: 401, and the newest token: 401
+     (family revoked).
+   - Deleting the published event: 409.
+   - Afterwards 0 users, 0 events and 0 refresh tokens were left.
+2. **Recap diagram:** a Mermaid diagram of the Phase A architecture in
+   README.md.
+3. **Quiz:** deferred. The student chose to do all learning at the end of the
+   project.
+4. **Teach-back:** deferred, for the same reason.
+5. **README** was rewritten: a status banner, a feature table with the test
+   proving each feature, the current vs target architecture, a quick start,
+   and known limitations. `docs/design.md` already covered every Phase A
+   decision.
+6. **CV wording:** suggested in the session, limited to built and tested
+   facts.
+
+**Measured facts available for a CV:** 84 automated tests (31 unit, 49
+integration, 4 adversarial) running against real Postgres; CI with
+lint, types, tests and migration checks; a 10-way concurrent sign-up race
+gives exactly 1 account; a 5-way concurrent refresh with one token gives
+exactly 1 success; login timing is 73 ms for a wrong password vs 74 ms for
+an unknown email.
+
+**For the end-of-project learning review (carry forward):**
+- The Shaky topics from S0.1 and S0.2 (both quizzes were skipped).
+- Every Phase A step S0.3 to S1.7 is in "Deferred learning".
+- Suggested teach-back for Phase A: "Walk through what happens, layer by
+  layer, from `POST /auth/login` to a successful `GET /me`, and explain why
+  `/me` never queries the database."

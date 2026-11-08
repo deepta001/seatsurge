@@ -1,12 +1,46 @@
 # seatsurge
 
-A ticket booking backend that stays correct when thousands of people try to
-buy the same limited seats at once.
+[![CI](https://github.com/deepta001/seatsurge/actions/workflows/ci.yml/badge.svg)](https://github.com/deepta001/seatsurge/actions/workflows/ci.yml)
 
-> **Status:** early setup (step S0.4). Nothing in this README is a working
-> feature yet; features are only listed here once a test demonstrates them.
+A ticket booking backend designed to stay correct when thousands of people
+try to buy the same limited seats at once.
 
-## Planned architecture
+> **Status: Phase A complete** (accounts and events). The never-oversell
+> booking engine (Redis holds, orders, outbox, worker) is the next phase and
+> is **not built yet**. This README only lists features that a test
+> demonstrates.
+
+## What works today
+
+| Feature | Endpoints | Proven by |
+|---|---|---|
+| Health checks | `GET /health/live`, `GET /health/ready` (503 if Postgres or Redis is down) | `tests/unit/test_health.py` |
+| Sign-up, always as `USER`; argon2 password hashes; duplicates are a 409 decided by DB UNIQUE constraints | `POST /auth/register` | `tests/integration/test_register.py`, adversarial test 15 |
+| Login with 15-minute HS256 JWT access tokens; identical 401 for "wrong password" and "no such email" | `POST /auth/login`, `GET /me` | `tests/unit/test_tokens.py`, `tests/integration/test_login.py` |
+| Auth on protected routes reads the token only (no DB query) | `GET /me` | `tests/unit/test_me.py` (passes with the DB unreachable) |
+| Rotating single-use refresh tokens, stored as SHA-256 hashes, with reuse detection that revokes the whole login family; real logout | `POST /auth/refresh`, `POST /auth/logout` | `tests/integration/test_refresh.py` |
+| Admins created only from the CLI (no default credentials) | `scripts/seed_admin.py` | `tests/unit/test_seed_admin.py` |
+| Admin event management: create with tiers, one-way status DRAFT -> PUBLISHED -> CANCELLED, delete drafts only; 403 for non-admins | `POST/PATCH/DELETE /events` | `tests/integration/test_events_admin.py` |
+| Public browsing: upcoming published events, name search (wildcards escaped), city filter, capped paging; drafts are 404 | `GET /events`, `GET /events/{id}` | `tests/integration/test_events_public.py` |
+| Database rules as the source of truth: `0 <= sold <= capacity`, unique tier names, role and status CHECKs | Alembic migrations | `tests/unit/test_models.py`, CI migration checks |
+
+The 84 tests (31 unit, 49 integration, 4 adversarial) run against a real
+Postgres 16 started by testcontainers. CI also applies every migration to an
+empty database, runs `alembic check` for model drift, and proves the
+downgrade path.
+
+## Architecture so far (Phase A)
+
+```mermaid
+flowchart LR
+    client[Client] -->|HTTP + Bearer JWT| api[FastAPI app]
+    api -->|SQLAlchemy async| pg[(Postgres 16<br/>users, events, tiers,<br/>refresh_tokens)]
+    api -.->|readiness ping only| redis[(Redis 7)]
+    cli[seed_admin CLI] --> pg
+    alembic[Alembic migrations] --> pg
+```
+
+## Where it's going (the full design)
 
 ```
 client -> nginx -> api (x3) --Lua--> Redis (holds, counters)
@@ -20,84 +54,66 @@ client -> nginx -> api (x3) --Lua--> Redis (holds, counters)
                        Postgres (tickets, tier sold counters) + pub/sub -> SSE
 ```
 
-## Folder layout
+Redis will be the fast gate (atomic Lua scripts, expiring holds); Postgres
+stays the source of truth, with constraints that make overselling impossible
+even if Redis is wrong. See `docs/design.md` for every decision and its
+trade-offs, and `docs/failure-modes.md` for each failure and the test that
+covers it.
+
+## Run it locally
+
+Needs Python 3.12, [uv](https://docs.astral.sh/uv/), Git and Docker Desktop.
+
+```
+cp .env.example .env                    # then replace every CHANGE_ME
+uv sync
+docker compose up -d --wait             # Postgres 16 + Redis 7
+uv run python -m alembic upgrade head   # create or update the tables
+uv run python -m scripts.seed_admin --email you@example.com --username you
+uv run python -m uvicorn app.main:app --reload
+```
+
+Then open http://127.0.0.1:8000/docs, log in, click **Authorize**, and paste
+the access token.
+
+Checks (Docker must be running for the tests):
+
+```
+uv run python -m pytest -v
+uv run python -m ruff check .
+uv run python -m ruff format --check .
+uv run python -m mypy
+uv run python -m alembic check
+```
+
+On Windows, run tools as `python -m <tool>`: Smart App Control blocks the
+unsigned `.exe` launchers in `.venv\Scripts`.
+
+## Repository layout
 
 | Folder | What goes in it |
 |---|---|
-| `app/api/` | HTTP routes, request/response schemas, error handlers |
-| `app/core/` | Settings, security, logging, typed errors |
-| `app/db/` | Postgres table models and sessions |
-| `app/redis/` | Redis client, Lua scripts and their wrappers |
-| `app/services/` | Business logic: holds, orders, events, auth |
-| `app/worker/` | Background tasks: outbox relay, stream consumer, hold sweeper |
-| `tests/` | `unit/`, `integration/`, `concurrency/`, `adversarial/` |
-| `docs/` | Design notes, learning log, glossary |
-| `learning/` | Concept primers and small runnable examples |
+| `app/api/` | HTTP routes, request/response models, dependencies, error handlers |
+| `app/core/` | Settings, password hashing, JWT tokens, typed errors |
+| `app/db/` | Table models and sessions |
+| `app/redis/` | Redis client (Lua scripts arrive in Phase B) |
+| `app/services/` | Business logic: auth, refresh tokens, events |
+| `app/worker/` | Background tasks (Phase C) |
+| `migrations/` | Alembic migrations |
+| `scripts/` | `seed_admin.py`, `check_connections.py` |
+| `tests/` | `unit/`, `integration/`, `adversarial/` (and `concurrency/` from Phase B) |
+| `docs/` | `design.md`, `failure-modes.md`, `glossary.md`, `learning-log.md` |
+| `learning/` | Concept primers and runnable examples |
 
-`migrations/`, `loadtest/`, `scripts/` and `deploy/` are added in the steps
-that first need them.
+## Known limitations (Phase A)
 
-## Requirements
-
-Python 3.12, [uv](https://docs.astral.sh/uv/), Git and Docker Desktop.
-
-```
-cp .env.example .env               # then replace every CHANGE_ME
-uv sync
-docker compose up -d --wait        # Postgres 16 + Redis 7
-uv run python -m scripts.check_connections
-uv run python -m alembic upgrade head   # create or update the database tables
-uv run python -m uvicorn app.main:app --reload
-uv run python -m pytest -v         # run the tests
-uv run python -m ruff check .      # lint
-uv run python -m ruff format .     # auto-format
-uv run python -m mypy              # type check
-```
-
-CI (`.github/workflows/ci.yml`) runs ruff, mypy and pytest on every push to
-`main` and on every pull request.
-
-Health checks: `GET /health/live` (is the process up?) and `GET /health/ready`
-(can it reach Postgres and Redis? It returns 503 if not). Both are covered by
-`tests/unit/test_health.py`.
-
-Registration: `POST /auth/register` creates a `USER` account (never an admin)
-and stores only an argon2 password hash. A duplicate email or username gets a
-409. Covered by `tests/integration/test_register.py` and adversarial test 15.
-
-Login: `POST /auth/login` returns a 15-minute HS256 JWT access token. Protected
-routes (so far `GET /me`) read it from `Authorization: Bearer <token>` without
-a database query. Covered by `tests/unit/test_tokens.py`,
-`tests/unit/test_me.py` and `tests/integration/test_login.py`.
-
-Refresh: login also returns a 7-day, single-use refresh token (stored only as
-a SHA-256 hash). `POST /auth/refresh` swaps it for a new pair; replaying a used
-one revokes that login's whole token family; `POST /auth/logout` revokes it.
-Covered by `tests/integration/test_refresh.py`. Design notes are in
-`docs/design.md`.
-
-Admins and events: admins are created only from the command line:
-
-```
-uv run python -m scripts.seed_admin --email you@example.com --username you
-```
-
-Admins can then `POST /events` (a DRAFT event with 1 to 20 price tiers),
-`PATCH /events/{id}` (details, or status DRAFT -> PUBLISHED -> CANCELLED) and
-`DELETE /events/{id}` (DRAFT only). Regular users get 403. Covered by
-`tests/integration/test_events_admin.py` and `tests/unit/test_seed_admin.py`.
-
-Browsing (no login): `GET /events?query=jazz&city=leeds&limit=20&offset=0`
-lists upcoming published events, soonest first, with a `total`;
-`GET /events/{id}` shows one event with its tiers (drafts are 404). Covered by
-`tests/integration/test_events_public.py`.
-
-The integration and adversarial tests start a throwaway Postgres in Docker
-(testcontainers), so Docker Desktop must be running for `pytest`.
-
-Then open http://127.0.0.1:8000/docs. On Windows, use `python -m uvicorn`
-rather than `uvicorn`, because Smart App Control blocks the unsigned launcher
-in `.venv\Scripts`.
+- No rate limiting on login yet (planned in S7.1).
+- Access tokens can't be revoked early: a deleted or demoted user keeps
+  access for up to 15 minutes (the stateless-auth trade-off).
+- Old refresh-token rows aren't cleaned up yet.
+- Admins can't list draft events through the API; tiers can't be edited
+  after creation.
+- Name search scans the table (fine for a small catalogue; no search index).
 
 ## Out of scope
 
