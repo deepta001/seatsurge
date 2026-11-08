@@ -313,3 +313,16 @@ Plain-English meanings of every technical term, with where it first appears.
 | `EVAL` / `EVALSHA` / `SCRIPT LOAD` | Run a script by its text / by its SHA fingerprint / load it to get that SHA. | S2.2 demo |
 | `register_script` | redis-py helper that loads a script and calls it by SHA. | `run_with_lua()` |
 | Return code | A number the script returns to say what happened (1 taken, 0 not enough, -2 missing). | `take_seats.lua` |
+
+## Reserving seats in Redis (S2.3)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| `reserve_tier.lua` | The script that atomically checks and reserves general-admission seats and writes the hold. | `app/redis/lua/` |
+| Per-user cap | The most seats one user may hold for one event at a time. | `uhold:{event}:{user}`, return code -3 |
+| `ReserveOutcome` | The enum the Python wrapper turns the script's return codes into. | `app/redis/scripts.py` |
+| Validate-then-write | Do every check before the first change, so a refusal changes nothing. | `reserve_tier.lua` |
+| Key schema | The agreed names and types of all Redis keys. | `app/redis/keys.py` |
+| `MULTI` / `EXEC` | A Redis transaction: queues commands and runs them together, but can't branch on values read inside it. | Why we use Lua instead (`docs/design.md`) |
+| Snapshot assertion | Capturing state before an action and asserting it's identical after. | `snapshot()` in `test_reserve_tier.py` |
+| `Redis.from_pool` | Builds a client that owns its pool, so closing the client closes the pool. | `build_redis_client()` |

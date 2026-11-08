@@ -25,13 +25,16 @@ import pytest_asyncio  # noqa: E402
 from alembic import command  # noqa: E402
 from alembic.config import Config  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
+from redis.asyncio import Redis  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine  # noqa: E402
 from testcontainers.community.postgres import PostgresContainer  # noqa: E402
+from testcontainers.community.redis import RedisContainer  # noqa: E402
 
 from app.api.dependencies import get_db_session  # noqa: E402
 from app.db.session import create_session_factory  # noqa: E402
 from app.main import app  # noqa: E402
+from app.redis.client import build_redis_client  # noqa: E402
 
 
 @pytest.fixture(scope="session")
@@ -76,3 +79,20 @@ async def client(db_engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
         await connection.execute(
             text("TRUNCATE users, events, tiers, refresh_tokens RESTART IDENTITY CASCADE")
         )
+
+
+@pytest.fixture(scope="session")
+def redis_url() -> Iterator[str]:
+    """Start a throwaway Redis 7 for the whole test run."""
+    with RedisContainer("redis:7-alpine") as container:
+        port = container.get_exposed_port(6379)
+        yield f"redis://127.0.0.1:{port}/0"
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def redis(redis_url: str) -> AsyncIterator[Redis]:
+    """A client for the test Redis, built exactly like the app's. Wiped after each test."""
+    client = build_redis_client(redis_url, max_connections=50, pool_timeout_seconds=5)
+    yield client
+    await client.flushdb()
+    await client.aclose()

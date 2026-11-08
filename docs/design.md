@@ -137,10 +137,28 @@ backstops, no hot rows) get their own sections when those parts are built.
 
 ## Phase B notes
 
-### The Redis client must queue for connections, not fail (found in S2.1)
+### The Redis client queues for connections instead of failing (found S2.1, fixed S2.3)
 - **Found:** with the default `redis.asyncio` pool (redis-py 8.1), 1,000
   simultaneous requests raised `MaxConnectionsError: Too many connections`.
-- **Planned fix (S2.3/S2.4):** `create_redis_client` should use a
-  `BlockingConnectionPool` with a sized `max_connections` and a wait timeout,
-  so a burst queues briefly instead of erroring. Under the thundering herd,
-  that's the difference between "a bit slower" and "errors".
+- **Chosen:** `build_redis_client` uses a `BlockingConnectionPool`
+  (`REDIS_MAX_CONNECTIONS`, default 50 per process;
+  `REDIS_POOL_TIMEOUT_SECONDS`, default 5). A burst waits briefly for a
+  connection instead of erroring. The test fixture uses the same builder, so
+  the 500-buyer test exercises it.
+- **Trade-off:** a request may wait up to 5 s for a connection under extreme
+  load, then fail. That's better than failing at once, and the limit keeps
+  Redis's own connection count bounded (3 replicas x 50).
+
+### reserve_tier.lua: one script for the whole reservation (S2.3)
+- **Chosen:** a single Lua script checks the counter exists (else -2), checks
+  the per-user cap (-3), checks enough seats (-1), then writes everything:
+  DECRBY the inventory, INCRBY the user's held count, HSET the hold record
+  (+15-minute EXPIRE grace), and ZADD the expiry index.
+- **Alternative:** several commands from Python, or a MULTI/EXEC transaction.
+- **Why:** MULTI/EXEC can't branch on a value it just read, and separate
+  commands reopen the S2.1 race. All refusals return **before** the first
+  write, so a refused request changes nothing.
+- **Order of checks:** "missing" first (never mistake it for sold out), then
+  the user cap, then availability.
+- **Return codes** are mapped to a `ReserveOutcome` enum in
+  `app/redis/scripts.py`, so callers never see magic numbers.

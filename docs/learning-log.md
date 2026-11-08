@@ -25,6 +25,7 @@ checked. The teach-back for all of them happens at the end.
 - S1.7 Paginated public event list and search: built, not checked.
 - S2.1 Race-condition (oversell) demo: built, not checked.
 - S2.2 Redis basics and first Lua script: built, not checked.
+- S2.3 reserve_tier.lua, wrapper and tests: built, not checked.
 
 ## Shaky topics
 
@@ -752,5 +753,46 @@ bugs, atomicity, why per-process locks don't work across replicas.
 **Key concepts:** Redis data types, TTL and self-expiring keys, missing is
 not zero, single-command atomicity, Lua scripts as atomic multi-step
 operations, KEYS vs ARGV, EVAL vs EVALSHA, return codes.
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S2.3: reserve_tier.lua, its Python wrapper and tests (2026-11-08)
+
+**What was built:**
+- `app/redis/lua/reserve_tier.lua` follows the section 5 sketch, plus an
+  `event` field in the hold hash. Order of checks: missing counter (-2),
+  user cap (-3), not enough seats (-1). Only then: DECRBY inventory, INCRBY
+  uhold, HSET hold, EXPIRE hold (TTL + 900), ZADD `holds:expiry`. Returns 1.
+- `app/redis/keys.py`: one function per key in the schema.
+- `app/redis/scripts.py`:
+  - `ReserveOutcome` enum and `HoldRequest` dataclass.
+  - `ReserveTierScript` uses `register_script` (EVALSHA) and refuses
+    qty < 1 before calling Redis.
+- `app/redis/client.py`: the S2.1 pool problem is fixed.
+  `build_redis_client` uses a `BlockingConnectionPool`
+  (`redis_max_connections` = 50, `redis_pool_timeout_seconds` = 5; new
+  settings) and `Redis.from_pool`, so `aclose()` also closes the pool.
+- `tests/conftest.py`: a Redis 7 testcontainer plus a `redis` fixture built
+  with the app's `build_redis_client`; FLUSHDB after each test.
+- Tests: `tests/integration/test_reserve_tier.py` (9) and
+  `tests/unit/test_redis_keys.py` (1).
+  - Every refusal is compared against a before/after snapshot (nothing
+    changed).
+  - The race test: 500 buyers wanting 1 to 3 seats each, on 50 seats.
+
+**Ran it:**
+- 94/94 tests passed; the new Redis tests passed 3 runs in a row (the race
+  test uses random quantities); ruff and mypy are clean.
+
+**Debugging moment:** the race test first failed with the same
+`MaxConnectionsError` as S2.1, because the test fixture used a default pool.
+The fix was for tests to use the app's own client builder, so the test now
+also proves the pool fix.
+
+**Key concepts:** one script for a whole multi-key update, validate-then-
+write, return codes mapped to an enum, EVALSHA via `register_script`,
+blocking connection pools, snapshot assertions for "nothing changed".
 
 **Understanding check:** deferred to the end of the project.

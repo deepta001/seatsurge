@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     database_url: SecretStr
     redis_url: SecretStr
 
+    # Per process. Three API replicas use 3x this many Redis connections.
+    redis_max_connections: int = Field(default=50, gt=0, le=1000)
+    # How long a request waits for a free Redis connection before failing.
+    redis_pool_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+
     # Signs access tokens. Anyone who knows it can forge a token for any user,
     # including an admin, so it lives only in .env. 32+ characters, so it can't
     # be guessed by brute force.
