@@ -19,6 +19,7 @@ checked. The teach-back for all of them happens at the end.
 - S1.1 Database models for users, events, tiers: built, not checked.
 - S1.2 Alembic and the first migration: built, not checked.
 - S1.3 Password hashing and registration (test 15): built, not checked.
+- S1.4 Login, JWT access tokens and current-user dependency: built, not checked.
 
 ## Shaky topics
 
@@ -437,5 +438,58 @@ had already used id 1. Sequences never go backwards, even on rollback.
 **Key concepts:** one-way hashing, argon2, salt, typed domain errors,
 DB-enforced uniqueness vs check-then-insert, sessions, integration tests
 with testcontainers, start barriers.
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S1.4: Login, JWT access tokens and the current-user dependency (2026-11-08)
+
+**What was built:**
+- Added `pyjwt` (stack).
+- Settings: `jwt_secret_key` (SecretStr, at least 32 characters, required)
+  and `access_token_minutes` (default 15). A 64-character secret was
+  generated into `.env` without being printed. `.env.example`, the test
+  conftest and CI each have their own key.
+- `app/core/tokens.py`:
+  - `create_access_token` puts `sub`, `role`, `type=access`, `iat` and `exp`
+    in the token.
+  - `decode_access_token` pins HS256, requires all those claims, checks the
+    type, and maps every failure to `NotAuthenticated`.
+- `app/core/errors.py`: `InvalidCredentials` and `NotAuthenticated` (401 with
+  `WWW-Authenticate: Bearer`). The error handler now passes headers through.
+- `app/services/auth.py`: `authenticate_user`, which uses a dummy-hash check
+  for unknown emails so the timing matches a wrong password.
+- `app/api/dependencies.py`: `get_current_user`, built on HTTPBearer, which
+  returns `AccessTokenClaims` with **no DB query**.
+- Routes: `POST /auth/login` returns `{access_token, token_type, expires_in}`;
+  `GET /me` (`app/api/me.py`) is the first protected route.
+- Tests:
+  - `tests/unit/test_tokens.py` (8): round trip, a 15-minute lifetime,
+    expired, a tampered payload, a wrong key, `alg: none`, a refresh-type
+    token, and junk.
+  - `tests/unit/test_me.py`: `/me` returns 200 while the DB is unreachable,
+    which proves there's no DB hit.
+  - `tests/integration/test_login.py` (5).
+
+**Ran it:**
+- 41/41 tests passed; ruff and mypy are clean.
+- Live demo against the dev DB:
+  - Login: 200 with `expires_in` 900.
+  - The decoded payload is readable.
+  - `/me`: 200.
+  - Editing role to ADMIN: 401. A 16-minute-old token: 401.
+  - Median login time: 73 ms for a wrong password vs 74 ms for an unknown
+    email.
+  - The demo user was deleted afterwards.
+
+**Documented trade-off:** with no DB check, a deleted or demoted user's token
+works until it expires (at most 15 minutes).
+
+**Not yet:** login rate limiting (S7.1) and refresh tokens (S1.5).
+
+**Key concepts:** JWT structure, signing vs encrypting, claims (`sub`, `exp`,
+`iat`), algorithm pinning, bearer auth, stateless auth and its trade-off,
+user-enumeration defence, timing side channels.
 
 **Understanding check:** deferred to the end of the project.

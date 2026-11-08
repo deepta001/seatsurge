@@ -40,6 +40,7 @@ jobs:
     env:
       DATABASE_URL: postgresql+asyncpg://seatsurge:ci-only-password@127.0.0.1:5432/seatsurge
       REDIS_URL: redis://:unused@127.0.0.1:6379/0
+      JWT_SECRET_KEY: ci-only-signing-key-not-used-for-anything-real
 
     steps:
       - name: Get the code

@@ -213,3 +213,22 @@ Plain-English meanings of every technical term, with where it first appears.
 | `dependency_overrides` | FastAPI's way to swap a dependency in tests (here: the test database's session). | The `client` fixture |
 | Start barrier | Making many tasks wait on one `asyncio.Event`, then releasing them together. | The 10-signups race test |
 | TRUNCATE ... RESTART IDENTITY | Empties tables fast and resets their id counters. | After each integration test |
+
+## Login and tokens (S1.4)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| JWT (JSON Web Token) | A signed token, `header.payload.signature`; the payload is readable, the signature makes it tamper-proof. | `app/core/tokens.py` |
+| Access token | A short-lived JWT (15 min) proving who the caller is. | `POST /auth/login` |
+| Claim | One fact inside a JWT payload, such as `sub`, `role`, `exp`. | `create_access_token()` |
+| `sub` / `iat` / `exp` | Subject (the user id), issued-at time, expiry time. | Token payload |
+| HS256 | HMAC with SHA-256: signing with one shared secret key. | `ALGORITHM` |
+| Signing key / `JWT_SECRET_KEY` | The secret used to sign and check tokens; whoever has it can mint any token. | `.env`, settings |
+| Algorithm pinning | Accepting only the algorithm we chose, so `alg: none` or swaps are refused. | `algorithms=[ALGORITHM]` |
+| Bearer token | A token sent as `Authorization: Bearer <token>`; whoever holds it can use it. | `HTTPBearer` |
+| 401 Unauthorized | "We don't know who you are": missing, wrong or expired credentials. | Login failure, `/me` without a token |
+| `WWW-Authenticate` | A response header telling the client which kind of credentials to send. | `NotAuthenticated` |
+| Stateless authentication | Trusting a signed token instead of looking the user up on each request. | `get_current_user()` |
+| User enumeration | Discovering which accounts exist from differences in an app's answers. | Login's identical 401 |
+| Timing side channel | Leaking information through how long something takes. | The dummy-hash check in `authenticate_user()` |
+| `@dataclass(frozen=True)` | A small read-only class for holding values. | `AccessTokenClaims` |

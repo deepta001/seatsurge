@@ -1,14 +1,31 @@
-"""Account business logic: registering users. (Login and tokens arrive in S1.4.)
+"""Account business logic: registering users and checking login credentials.
 
 Kept apart from HTTP, so it can be called and tested without a web request.
 """
 
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import UserAlreadyExists
-from app.core.security import hash_password
+from app.core.errors import InvalidCredentials, UserAlreadyExists
+from app.core.security import hash_password, verify_password
 from app.db.models import User, UserRole
+
+# A real argon2 hash of a password nobody uses. When the email is unknown we
+# still check against this, so "no such user" takes as long as "wrong password"
+# and response timing can't reveal which emails are registered.
+_DUMMY_PASSWORD_HASH = hash_password("timing-equaliser-not-a-real-password")
+
+
+async def authenticate_user(session: AsyncSession, *, email: str, password: str) -> User:
+    """Return the user if the email and password match. Otherwise raise InvalidCredentials."""
+    user = await session.scalar(select(User).where(User.email == email.strip().lower()))
+    if user is None:
+        verify_password(password, _DUMMY_PASSWORD_HASH)  # spend the same time anyway
+        raise InvalidCredentials()
+    if not verify_password(password, user.password_hash):
+        raise InvalidCredentials()
+    return user
 
 
 async def register_user(session: AsyncSession, *, email: str, username: str, password: str) -> User:

@@ -44,3 +44,53 @@ uv run python -c "from app.core.security import hash_password as h; print(h('pw'
 ```
 
 The same password is printed twice as two different hashes.
+
+---
+
+# Part 2: JWT access tokens (S1.4)
+
+**Analogy:** a JWT is a festival wristband with a tamper-proof seal. Staff
+don't phone the box office every time you walk past; they glance at the
+wristband (who you are, which areas you're allowed in, when it expires) and
+check that the seal is intact.
+
+## The three parts: `header.payload.signature`
+
+- **Header:** `{"alg": "HS256", "typ": "JWT"}`.
+- **Payload:** the claims, for example
+  `{"sub": "4", "role": "USER", "type": "access", "iat": ..., "exp": ...}`.
+  It's only base64-encoded, **not encrypted**: anyone can read it, so never
+  put secrets in it.
+- **Signature:** HMAC-SHA256 of the first two parts, using `JWT_SECRET_KEY`.
+  Change one character of the payload and the signature no longer matches.
+
+## Why the API can skip the database
+
+The signature proves the server issued the token, and `exp` proves it's
+recent. So `get_current_user` trusts the claims without a query, which keeps
+every request fast (CLAUDE.md section 9).
+
+**Trade-off:** a deleted or demoted user keeps their old powers until the
+token expires. Keeping tokens short (15 min) limits that window, and refresh
+tokens (S1.5) keep people signed in without long-lived access tokens.
+
+## Attacks the tests cover (`tests/unit/test_tokens.py`)
+
+| Attack | Why it fails |
+|---|---|
+| Edit the payload to say `ADMIN` | The signature no longer matches |
+| Sign your own token | You don't have the secret key |
+| `alg: none` (no signature) | We accept only `HS256` (`algorithms=[...]` is pinned) |
+| Reuse an old token | `exp` has passed |
+| Use a refresh token as an access token | The `type` claim must be `access` |
+
+## Login without leaking who has an account
+
+A wrong password and an unknown email return the **same** 401 body, and take
+about the same time (an unknown email is still checked against a dummy
+hash). Measured live: 73 ms vs 74 ms.
+
+## Try it
+
+Open http://127.0.0.1:8000/docs, log in with `POST /auth/login`, click
+**Authorize**, paste the `access_token`, and call `GET /me`.

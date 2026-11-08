@@ -65,6 +65,11 @@ Registration: `POST /auth/register` creates a `USER` account (never an admin)
 and stores only an argon2 password hash. A duplicate email or username gets a
 409. Covered by `tests/integration/test_register.py` and adversarial test 15.
 
+Login: `POST /auth/login` returns a 15-minute HS256 JWT access token. Protected
+routes (so far `GET /me`) read it from `Authorization: Bearer <token>` without
+a database query. Covered by `tests/unit/test_tokens.py`,
+`tests/unit/test_me.py` and `tests/integration/test_login.py`.
+
 The integration and adversarial tests start a throwaway Postgres in Docker
 (testcontainers), so Docker Desktop must be running for `pytest`.
 

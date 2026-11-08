@@ -7,7 +7,7 @@ asks `get_settings()` instead of reading environment variables directly.
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,6 +29,14 @@ class Settings(BaseSettings):
     # SecretStr prints as '**********' so the password never lands in logs.
     database_url: SecretStr
     redis_url: SecretStr
+
+    # Signs access tokens. Anyone who knows it can forge a token for any user,
+    # including an admin, so it lives only in .env. 32+ characters, so it can't
+    # be guessed by brute force.
+    jwt_secret_key: SecretStr = Field(min_length=32)
+    # Short-lived on purpose: a stolen token stops working within minutes
+    # (CLAUDE.md section 9). Refresh tokens (S1.5) keep users signed in.
+    access_token_minutes: int = Field(default=15, gt=0, le=60)
 
 
 @lru_cache
