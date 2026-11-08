@@ -6,7 +6,7 @@ connection) returns the first answer instead of creating a second hold.
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Header, status
+from fastapi import APIRouter, Depends, Header, Path, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from redis.asyncio import Redis
@@ -16,7 +16,7 @@ from app.api.dependencies import get_current_user, get_db_session, get_redis
 from app.core.errors import DomainError
 from app.core.tokens import AccessTokenClaims
 from app.services import idempotency
-from app.services.holds import create_hold
+from app.services.holds import cancel_hold, create_hold
 from app.services.idempotency import StoredResponse
 
 router = APIRouter(tags=["holds"])
@@ -109,3 +109,13 @@ async def create(
         StoredResponse(status.HTTP_201_CREATED, response.model_dump(mode="json")),
     )
     return response
+
+
+@router.delete("/holds/{hold_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete(
+    hold_id: str = Path(max_length=64),
+    user: AccessTokenClaims = Depends(get_current_user),
+    redis: Redis = Depends(get_redis),
+) -> None:
+    """Give your hold's seats back. 204 even if it was already released or expired."""
+    await cancel_hold(redis, user_id=user.user_id, hold_id=hold_id)

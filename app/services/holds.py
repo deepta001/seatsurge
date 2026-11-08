@@ -16,6 +16,7 @@ from app.core.errors import (
     EventNotFound,
     EventNotOnSale,
     HoldLimitExceeded,
+    HoldNotFound,
     InventoryNotReady,
     SeatingNotSupported,
     SoldOut,
@@ -23,7 +24,14 @@ from app.core.errors import (
 )
 from app.core.settings import get_settings
 from app.db.models import Event, EventStatus, SeatingType, Tier
-from app.redis.scripts import HoldRequest, ReserveOutcome, ReserveTierScript
+from app.redis.scripts import (
+    HoldRequest,
+    HoldStatus,
+    ReleaseHoldScript,
+    ReleaseOutcome,
+    ReserveOutcome,
+    ReserveTierScript,
+)
 
 
 @dataclass(frozen=True)
@@ -90,3 +98,20 @@ async def _check_tier_is_on_sale(
     tier = await session.get(Tier, tier_id)
     if tier is None or tier.event_id != event_id:
         raise TierNotFound()
+
+
+async def cancel_hold(redis: Redis, *, user_id: int, hold_id: str) -> None:
+    """The user gives their own hold back. Safe to repeat: a second call does nothing.
+
+    Raises HoldNotFound for an unknown hold AND for someone else's hold, so a
+    caller can't learn whether another user's hold id exists.
+    """
+    outcome = await ReleaseHoldScript(redis)(
+        hold_id, new_status=HoldStatus.RELEASED, owner_id=user_id
+    )
+    if outcome in (ReleaseOutcome.NOT_FOUND, ReleaseOutcome.NOT_OWNER):
+        raise HoldNotFound()
+    if outcome == ReleaseOutcome.KEY_MISMATCH:
+        # The hold record doesn't match its own keys: a bug, never user error.
+        raise RuntimeError(f"hold {hold_id} record does not match its keys")
+    # RELEASED or ALREADY_FINISHED: either way, the hold no longer holds seats.

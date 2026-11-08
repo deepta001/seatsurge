@@ -34,6 +34,10 @@ end
 -- All checks passed: from here on, do every write.
 redis.call('DECRBY', KEYS[1], qty)
 redis.call('INCRBY', KEYS[4], qty)
+-- Safety net (added in S2.7): the user's held count disappears on its own
+-- after this hold's lifetime plus grace, so a missed release can never
+-- leave a user stuck at the cap forever. Each new hold pushes it later.
+redis.call('EXPIRE', KEYS[4], tonumber(ARGV[6]) + 900)
 redis.call('HSET', KEYS[2],
   'user', ARGV[3], 'event', ARGV[8], 'tier', ARGV[7], 'qty', qty,
   'status', 'HELD', 'expires_at', ARGV[4])

@@ -122,3 +122,10 @@ class RequestInProgress(DomainError):
     code = "request_in_progress"
     message = "A request with this Idempotency-Key is still being processed."
     headers = {"Retry-After": "1"}
+
+
+class HoldNotFound(DomainError):
+    # Also used for someone else's hold, so hold ids can't be probed.
+    status_code = 404
+    code = "hold_not_found"
+    message = "No hold with that id."

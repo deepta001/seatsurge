@@ -29,6 +29,7 @@ checked. The teach-back for all of them happens at the end.
 - S2.4 Hold service and POST /events/{id}/holds: built, not checked.
 - S2.5 Idempotency-Key handling (test 6): built, not checked.
 - S2.6 Per-user hold cap and request-size limits: built, not checked.
+- S2.7 release_hold.lua, DELETE /holds, expiry sweeper (test 5): built, not checked.
 
 ## Shaky topics
 
@@ -911,5 +912,53 @@ so the 413 decision never passes through FastAPI.
 **Key concepts:** ASGI middleware, the receive/send messages, Content-Length
 vs chunked transfer, 413 Payload Too Large, defence in depth (pydantic field
 limits plus a body cap plus the atomic cap in Redis).
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S2.7: release_hold.lua, DELETE /holds/{id} and the expiry sweeper, test 5 (2026-11-08)
+
+**What was built:**
+- `app/redis/lua/release_hold.lua` (an idempotent release):
+  - Returns: 1 released, 0 already finished, -1 not found, -2 not the
+    owner, -3 not expired (sweeper mode), -4 keys mismatch.
+  - Only a HELD hold gives its seats back.
+  - It never creates a missing counter, and never lets uhold go negative.
+- `reserve_tier.lua`: uhold now gets EXPIRE TTL + 900 (a safety net).
+- `app/redis/scripts.py`:
+  - `ReleaseOutcome`, `HoldStatus` and `ReleaseHoldScript`.
+  - It reads the hold first to build the keys; the script re-checks them.
+- `app/services/holds.py`: `cancel_hold` maps not-found and not-owner both
+  to `HoldNotFound` (404).
+- `app/api/holds.py`: `DELETE /holds/{hold_id}` returns 204, including for
+  an already-released hold.
+- `app/worker/sweeper.py`: `sweep_expired_holds(now=...)` and
+  `run_sweeper` (a 1 s loop that survives errors).
+- `app/worker/main.py`: the worker process entry point.
+- Tests:
+  - `tests/integration/test_release_hold.py` (9).
+  - `tests/integration/test_cancel_hold_api.py` (5).
+  - `tests/adversarial/test_05_abandoned_hold_returns_inventory.py` (4):
+    the sweeper is given "now", so the tests don't wait.
+
+**Ran it:**
+- 138/138 tests passed; the race tests passed 3 runs in a row; ruff and
+  mypy are clean. All 18 new tests passed on the first run.
+- Live, with real time: the API ran with `HOLD_TTL_SECONDS=30` beside the
+  real worker.
+  - User 1 held 6 and user 2 held 4, leaving 0.
+  - User 2 cancelled (DELETE 204), leaving 4.
+  - User 1 walked away. At t=31 s, 10 seats were left; the worker log showed
+    "released 1 expired hold(s)" at 18:51:29.269 for a hold expiring at
+    18:51:29.
+  - Everything was cleaned up afterwards.
+
+**Small fixes:** mypy wanted explicit `str()` around values read from Redis
+(redis-py's type hints allow bytes too).
+
+**Key concepts:** idempotent operations, state machines (HELD -> RELEASED /
+EXPIRED), sweepers and background workers, sorted sets as time indexes,
+injecting time for testing, safety-net TTLs.
 
 **Understanding check:** deferred to the end of the project.

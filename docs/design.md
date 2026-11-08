@@ -219,3 +219,33 @@ backstops, no hot rows) get their own sections when those parts are built.
 - **To decide in S2.7:** `uhold` currently has no TTL. If releases ever fail,
   a user could stay stuck at the cap. The sweeper and release script must
   decrement it, and must never let it go below 0.
+
+### Releasing holds: one idempotent script for cancels and expiry (S2.7)
+- **Chosen:** `release_hold.lua` returns seats only if the hold is still
+  `HELD`, then marks it RELEASED (user cancel) or EXPIRED (sweeper). Any
+  second attempt (a retry, two sweepers, or a sweeper racing a cancel) sees
+  the new status and changes nothing. Tested with 10 simultaneous releases,
+  3 simultaneous sweepers, and a cancel racing the sweeper.
+- **Keys:** the inventory and uhold keys depend on the hold's fields, so the
+  wrapper reads the hold first and passes them as KEYS (declared keys only,
+  so it stays cluster-safe). The script re-checks event, tier and user
+  against the record (-4 if they don't match), so a stale read can't touch
+  the wrong counters.
+- **A missing counter is not re-created** by a release (that would invent a
+  count); rule 4's rebuild-from-DB (S2.8) handles it.
+- **`uhold` never goes negative**, and since S2.7 it gets a safety TTL of
+  hold TTL + 900 s on every reserve, so a missed release can't strand a user
+  at the cap.
+- **Ownership:** `DELETE /holds/{id}` answers 404 for both unknown and
+  someone else's holds, so hold ids can't be probed (rule 1).
+- **CONFIRMING / CONSUMED holds are never released** by this script; the
+  sweeper's grace-period check for CONFIRMING holds comes with confirm in
+  Phase C.
+
+### The sweeper (S2.7)
+- Runs in the separate worker process (`python -m app.worker.main`), once
+  per second: `ZRANGEBYSCORE holds:expiry -inf now LIMIT 100`, then releases
+  each hold in "only if expired" mode.
+- Safe to run several copies at once (idempotent releases). A failed pass
+  is logged and retried next tick; it never stops the loop.
+- Measured live: a 30-second hold was released within 0.3 s of its expiry.

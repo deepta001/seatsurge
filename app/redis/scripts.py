@@ -16,6 +16,7 @@ from app.redis.keys import HOLDS_EXPIRY_KEY, hold_key, inventory_key, user_hold_
 LUA_DIR = Path(__file__).parent / "lua"
 # Read once at import, not on every request.
 RESERVE_TIER_LUA = (LUA_DIR / "reserve_tier.lua").read_text()
+RELEASE_HOLD_LUA = (LUA_DIR / "release_hold.lua").read_text()
 
 
 class ReserveOutcome(enum.Enum):
@@ -68,3 +69,70 @@ class ReserveTierScript:
         # ReserveOutcome(code) raises ValueError on an unexpected code, which
         # would mean the script and this wrapper are out of step: a bug.
         return ReserveOutcome(int(code))
+
+
+class ReleaseOutcome(enum.Enum):
+    RELEASED = 1
+    ALREADY_FINISHED = 0  # released or expired earlier: nothing to do
+    NOT_FOUND = -1
+    NOT_OWNER = -2
+    NOT_EXPIRED = -3  # sweeper mode only
+    KEY_MISMATCH = -4  # the record changed between reading it and releasing
+
+
+class HoldStatus(enum.StrEnum):
+    HELD = "HELD"
+    RELEASED = "RELEASED"
+    EXPIRED = "EXPIRED"
+
+
+class ReleaseHoldScript:
+    """Give a hold's seats back exactly once. See app/redis/lua/release_hold.lua."""
+
+    def __init__(self, redis: Redis) -> None:
+        self._redis = redis
+        self._script = redis.register_script(RELEASE_HOLD_LUA)
+
+    async def __call__(
+        self,
+        hold_id: str,
+        *,
+        new_status: HoldStatus,
+        owner_id: int | None,
+        only_if_expired_at_ms: int | None = None,
+    ) -> ReleaseOutcome:
+        """Release one hold.
+
+        owner_id: the user who must own it (None = anyone; the sweeper).
+        only_if_expired_at_ms: if given, only release if the hold's
+        expires_at is at or before this time (the sweeper's "now").
+        """
+        # The inventory and per-user keys depend on the hold's own fields, so
+        # read them first. The script re-checks them, so a stale read can't
+        # make it touch the wrong counters.
+        record = await self._redis.hgetall(hold_key(hold_id))
+        if not record:
+            await self._redis.zrem(HOLDS_EXPIRY_KEY, hold_id)
+            return ReleaseOutcome.NOT_FOUND
+
+        # str(): the client decodes responses to text, but redis-py's type hints
+        # also allow bytes, so make it explicit for mypy.
+        event_id, tier_id, user_id = str(record["event"]), str(record["tier"]), str(record["user"])
+        keys = [
+            hold_key(hold_id),
+            HOLDS_EXPIRY_KEY,
+            inventory_key(int(event_id), int(tier_id)),
+            user_hold_key(int(event_id), int(user_id)),
+        ]
+        args: list[str | int] = [
+            hold_id,
+            new_status.value,
+            "" if owner_id is None else str(owner_id),
+            only_if_expired_at_ms or 0,
+            "1" if only_if_expired_at_ms is not None else "0",
+            event_id,
+            tier_id,
+            user_id,
+        ]
+        code = await self._script(keys=keys, args=args)
+        return ReleaseOutcome(int(code))

@@ -360,3 +360,16 @@ Plain-English meanings of every technical term, with where it first appears.
 | 413 Payload Too Large | "Your request body is bigger than I accept." | `payload_too_large` |
 | Denial of service (DoS) | Making a service unusable by overloading it, e.g. with huge requests. | Why bodies are capped |
 | Defence in depth | Several independent protections, so one gap doesn't break everything. | Field limits + body cap + Redis cap |
+
+## Releasing holds (S2.7)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| Release | Giving a hold's seats back to the inventory. | `release_hold.lua` |
+| Hold status | HELD -> RELEASED (user cancelled) or EXPIRED (time ran out); later CONFIRMING -> CONSUMED. | The `status` field of `hold:{id}` |
+| Sweeper | A background job that finds expired holds and releases them. | `app/worker/sweeper.py` |
+| Worker process | The second process type, beside the API, running background jobs. | `python -m app.worker.main` |
+| `ZRANGEBYSCORE ... LIMIT` | Fetch sorted-set members with scores in a range, a batch at a time. | `sweep_expired_holds()` |
+| `ZREM` | Remove a member from a sorted set. | Releasing a hold |
+| Safety-net TTL | An expiry that cleans up if normal cleanup ever fails. | `uhold` EXPIRE |
+| Time injection | Passing "now" into code, so tests can jump ahead instead of waiting. | `sweep_expired_holds(now=...)` |
