@@ -171,3 +171,20 @@ Plain-English meanings of every technical term, with where it first appears.
 | Savepoint | A checkpoint inside a transaction that you can roll back to without losing everything. | `begin_nested()` in the demo |
 | Integer cents | Storing money as a whole number of cents, because floats can't represent 0.10 exactly. | `price_cents` |
 | `TIMESTAMP WITH TIME ZONE` | A date-time that is an exact moment, unaffected by the server's time zone. | `starts_at`, `created_at` |
+
+## Migrations (S1.2)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| Migration | A versioned script that changes the database schema one step, with an upgrade and a downgrade. | `migrations/versions/` |
+| Alembic | The migration tool for SQLAlchemy. | `alembic.ini`, `migrations/env.py` |
+| Revision / revision id | One migration, identified by a random id such as `19624396e697`. | Migration file names |
+| `down_revision` | The revision before this one; together they form a chain. | Each migration file |
+| head | The newest revision in the chain. | `alembic upgrade head` |
+| base | "No migrations applied" (an empty schema). | `alembic downgrade base` |
+| `alembic_version` | A one-row table where Alembic records which revision the database is on. | Postgres |
+| Autogenerate | Alembic drafting a migration by diffing the models against the real database; always review it. | `alembic revision --autogenerate` |
+| `alembic check` | Fails if the models contain changes no migration covers ("drift"). | The CI step "Migrations match the models" |
+| Schema drift | When the code's models and the real database disagree. | The S1.2 break-it demo |
+| Post-write hook | A command Alembic runs on every new migration file (ruff here). | `[post_write_hooks]` in `alembic.ini` |
+| Service container (CI) | An extra container GitHub Actions runs beside the job, such as a throwaway Postgres. | `services:` in `ci.yml` |

@@ -46,6 +46,7 @@ cp .env.example .env               # then replace every CHANGE_ME
 uv sync
 docker compose up -d --wait        # Postgres 16 + Redis 7
 uv run python -m scripts.check_connections
+uv run python -m alembic upgrade head   # create or update the database tables
 uv run python -m uvicorn app.main:app --reload
 uv run python -m pytest -v         # run the tests
 uv run python -m ruff check .      # lint

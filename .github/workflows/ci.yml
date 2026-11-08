@@ -18,6 +18,29 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
+    # A throwaway Postgres 16 that exists only for this CI run, used to prove
+    # the migrations apply cleanly. The password is a dummy; nothing real lives here.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: seatsurge
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: seatsurge
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U seatsurge -d seatsurge"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    # There's no .env in CI, so the settings come from here. Redis isn't
+    # needed for these steps, but the settings require a value.
+    env:
+      DATABASE_URL: postgresql+asyncpg://seatsurge:ci-only-password@127.0.0.1:5432/seatsurge
+      REDIS_URL: redis://:unused@127.0.0.1:6379/0
+
     steps:
       - name: Get the code
         uses: actions/checkout@v4
@@ -40,6 +63,19 @@ jobs:
       - name: Type check (mypy)
         run: uv run python -m mypy
 
-      # No .env exists in CI; tests/conftest.py supplies safe dummy settings.
+      # tests/conftest.py replaces the settings with dummy addresses, so the
+      # unit tests never touch the Postgres service above.
       - name: Tests (pytest)
         run: uv run python -m pytest -v
+
+      - name: Migrations apply to an empty database
+        run: uv run python -m alembic upgrade head
+
+      # Fails if a model was changed without writing a matching migration.
+      - name: Migrations match the models
+        run: uv run python -m alembic check
+
+      - name: Migrations can be undone and redone
+        run: |
+          uv run python -m alembic downgrade base
+          uv run python -m alembic upgrade head

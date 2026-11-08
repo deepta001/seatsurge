@@ -6,6 +6,7 @@ readme = "README.md"
 # The stack is fixed to Python 3.12 (CLAUDE.md section 2).
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "alembic>=1.20.1",
     "asyncpg>=0.32.0",
     "fastapi>=0.162.1",
     "pydantic-settings>=2.16.2",
@@ -43,7 +44,7 @@ extend-immutable-calls = ["fastapi.Depends"]
 
 [tool.mypy]
 python_version = "3.12"
-files = ["app", "tests", "scripts"]
+files = ["app", "tests", "scripts", "migrations"]
 # Every function must have type hints, even outside app/services.
 disallow_untyped_defs = true
 warn_unused_ignores = true
