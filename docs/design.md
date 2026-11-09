@@ -968,3 +968,31 @@ load test (S8.3).
   logging context is gone, so the middleware also leaves the id on
   `request.state`; the handler re-binds it, so the 500 body, its header, the
   traceback line and the access line all share one id.
+
+### The load test and the consistency check (S8.3)
+- **Each simulated user is one real buyer who tries once:** hold 1 seat;
+  if it worked, confirm it; then stop. A 409 sold_out is the expected answer
+  for 900 of 1,000, so Locust counts it as a success; anything else is a
+  failure. The test ends itself when the last buyer finishes.
+- **Everyone at once:** all 1,000 users start within ~0.04 s (spawn rate =
+  user count), with no think time: the thundering herd from section 1.
+- **The counter starts missing:** `prepare.py` doesn't create the Redis
+  counter, so the first wave must rebuild it, once, under the lock (rule 4).
+- **Tokens are signed by the load generator** with the app's secret instead
+  of 1,000 logins: login is rate limited per IP (20 a minute), and the sale
+  is what's being measured. The load generator stays outside the app: no
+  test endpoints were added (section 9).
+- **Buyers are real accounts, inserted in bulk with one shared hash:**
+  orders need real users, and 1,000 argon2 hashes would make preparing the
+  test slower than running it.
+- **Locust lives in its own dependency group** (`uv run --group load`), so
+  CI and normal development don't install gevent and friends.
+- **`verify_consistency.py` is independent of the code it checks:** it reads
+  Postgres directly (one statement per tier: sold, ISSUED tickets, CONFIRMED
+  seats, PENDING orders, ticket numbers) and compares the Redis counter with
+  `compute_available` (capacity - sold - live holds - PENDING orders). A
+  missing counter is a mismatch, never 0. Exit 0/1/2 (2 = queue didn't
+  drain), so scripts and CI can rely on it.
+- **Cleanup by id, never by pattern or TRUNCATE:** the run's ids are written
+  to `loadtest/run.json` / `created.json` (git-ignored) and `cleanup.py`
+  deletes exactly those rows and keys, so the dev database survives.

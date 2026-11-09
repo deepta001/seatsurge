@@ -55,6 +55,7 @@ checked. The teach-back for all of them happens at the end.
 - S8.1 Three API replicas behind nginx: built, not checked.
 - S8.2 Metrics and the Grafana dashboard: built, not checked.
 - S8.2b Structured logs and the correlation id: built, not checked.
+- S8.3 Locust load test and verify_consistency.py: built, not checked.
 
 ## Shaky topics
 
@@ -2363,5 +2364,46 @@ Split from S8.2 to keep each step reviewable.
 **Key concepts:** structured logging, correlation ids, context variables in
 async code, carrying context across process boundaries (DB row, stream
 field), log injection.
+
+**Understanding check:** deferred to the end of the project.
+
+## S8.3: Locust load test and verify_consistency.py (2026-11-09)
+
+**Built:**
+- `loadtest/prepare.py`: one event with N seats and M real buyers (bulk
+  insert, one shared hash); no Redis counter, so the herd must rebuild it.
+- `loadtest/locustfile.py`: each user holds 1 seat, confirms if it got one,
+  then stops; 409 sold_out counts as success; the test ends itself.
+- `loadtest/cleanup.py`: deletes exactly the run's rows and keys.
+- `scripts/verify_consistency.py`: Postgres against itself and against
+  Redis, per tier; exit 0 consistent, 1 mismatch, 2 queue not drained.
+- `Makefile`: `up`, `down`, `test`, `lint`, `load`, `verify`, `load-clean`;
+  CI dry-runs every target (`make` isn't installed on this Windows machine).
+- New dev dependency group `load` with Locust (from the section 2 stack).
+
+**Tests:** `tests/integration/test_verify_consistency.py` (6): a finished
+sale is consistent; a wrong `sold`, a wrong Redis counter, a missing counter
+and an undrained queue are each reported; the command's exit codes.
+
+**Ran it:**
+- 349/349 tests passed; ruff, format and mypy clean.
+- Mutation check on the verifier, 5 weakened versions, all caught.
+- The headline test, 3 runs, through nginx and 3 replicas, 1,000 buyers on
+  100 seats: each run 100 x 201 / 900 x 409 holds, 100 x 202 confirms,
+  0 failed requests; `verify_consistency` CONSISTENT (100 tickets, 0
+  oversold, exit 0); Prometheus: 0 invariant violations, empty backlog.
+- Each run took ~3.5 s; Locust measured hold p50 ~2.2 s and p99 ~3.0 s on
+  this laptop. That is slow for an operation Redis does in ~40 us: the
+  S8.2 metrics point at requests queueing for the 50 Redis connections per
+  replica. Measured properly, with machine specs, in S8.5; any tuning is a
+  separate, measured change.
+- Cleanup left the database empty and no Redis keys from the runs.
+
+**Found along the way:** two Redis keys from an earlier day's demo remain
+(`inv:29:31:avail` for a deleted event, and one idempotency key that expires
+by itself). Harmless; not deleted without asking.
+
+**Key concepts:** load testing, thundering herd, success vs expected
+rejection, consistency checks and exit codes, cleanup by id.
 
 **Understanding check:** deferred to the end of the project.

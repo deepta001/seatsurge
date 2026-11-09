@@ -618,3 +618,9 @@ Plain-English meanings of every technical term, with where it first appears.
 | Context variable | A value that follows one request's (or one task's) code, even with many running at once. | `correlation_scope` |
 | Access log | One line per HTTP request: what was asked, the answer, how long it took. | `app/api/request_context.py` |
 | Log injection | Putting crafted text (like a newline) into a log to forge or break entries. | `VALID_ID` |
+| Load test | Running many simulated users against the system to see how it behaves under pressure. | `loadtest/locustfile.py` |
+| Locust | A Python load-testing tool: each simulated user is a small Python class. | `loadtest/` |
+| Thundering herd | Very many clients arriving at the same instant (e.g. tickets go on sale). | the 1,000-user spawn |
+| Consistency check | Comparing two stores (Postgres, Redis) that should agree, and reporting any difference. | `scripts/verify_consistency.py` |
+| Exit code | A number a program returns when it ends: 0 = success, anything else = a problem. | `verify_consistency.py` |
+| Makefile | A file of named shortcuts for commands (`make test`). | `Makefile` |

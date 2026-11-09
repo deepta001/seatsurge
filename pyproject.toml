@@ -28,6 +28,9 @@ dev = [
     "ruff>=0.17.4",
     "testcontainers>=4.15.0",
 ]
+load = [
+    "locust>=2.47.0",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

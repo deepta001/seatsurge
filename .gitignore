@@ -21,3 +21,8 @@ htmlcov/
 .idea/
 Thumbs.db
 .DS_Store
+
+# Load-test run files and results (S8.3): per-run, local only
+loadtest/run.json
+loadtest/created.json
+loadtest/results/

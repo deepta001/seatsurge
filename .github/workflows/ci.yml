@@ -69,6 +69,11 @@ jobs:
       - name: Tests (pytest)
         run: uv run python -m pytest -v
 
+      # S8.3: every Makefile target parses and names real commands (dry run:
+      # prints the commands without running them).
+      - name: Makefile targets exist
+        run: make --dry-run up down test lint load verify load-clean
+
       # S8.1: the app image builds, and nginx accepts its config.
       - name: App image builds
         run: docker build --tag seatsurge-app .
