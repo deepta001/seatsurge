@@ -301,3 +301,25 @@ backstops, no hot rows) get their own sections when those parts are built.
   S8.3 are the per-request Postgres reads, Docker Desktop's port forwarding
   on Windows, and uvicorn's pure-Python HTTP parsing. **No performance claim
   is made until then.**
+
+## Phase C: orders and tickets
+
+### Order and ticket tables (S3.1)
+- **Order ids are UUIDs**, not 1, 2, 3...: they appear in URLs, and
+  sequential ids would reveal order volume and invite guessing.
+- **Two columns added to the CLAUDE.md schema: `orders.tier_id` and
+  `orders.quantity`.** The spec needs both. The rehydrate formula (section 5)
+  subtracts "seats in PENDING orders" per tier, and confirm (section 7.2)
+  enforces a per-user purchase cap per event, which needs quantities. They
+  are indexed `(tier_id, status)` for that count.
+- **Backstops in Postgres:**
+  - `uq_orders_hold_id`: one hold becomes at most one order.
+  - `uq_orders_user_id_idempotency_key`.
+  - Partial unique indexes `uq_tickets_issued_seat (event_id, seat_id)` and
+    `uq_tickets_issued_number (tier_id, ticket_number)`, both
+    `WHERE status = 'ISSUED'`, so cancelled tickets free their seat or
+    number. NULL `seat_id` (general admission) never clashes.
+- **`tickets.seat_id` has no foreign key yet;** the seats table and its FK
+  arrive with reserved seating (S6.1).
+- `outbox_events` and `processed_messages` are added where first used (S3.3,
+  S4.4).

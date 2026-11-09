@@ -32,6 +32,7 @@ checked. The teach-back for all of them happens at the end.
 - S2.7 release_hold.lua, DELETE /holds, expiry sweeper (test 5): built, not checked.
 - S2.8 Missing counter rehydrated, never zero (test 12): built, not checked.
 - S2.9 Concurrency test 1 and 3-process demo: built, not checked.
+- S3.1 Transactions primer; orders and tickets tables: built, not checked.
 
 ## Shaky topics
 
@@ -1049,5 +1050,47 @@ never over-sell).
 invariant checks across stores, mutation testing (proving a test can fail),
 replicas sharing state only through Redis and Postgres, measuring before
 optimising.
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## Phase C starts. S3.1: Transactions primer; orders and tickets tables (2026-11-09)
+
+**What was built:**
+- `app/db/order_models.py` (a new file, keeping `models.py` under 200
+  lines).
+  - `OrderStatus` and `TicketStatus`.
+  - `Order`: UUID id, user / event / tier FKs, quantity, `hold_id` UNIQUE,
+    `idempotency_key`, status (default PENDING), total_cents, created_at.
+    Plus `UNIQUE(user_id, idempotency_key)`, CHECKs and indexes.
+  - `Ticket`: bigint id, order / event / tier FKs, `seat_id` (nullable, no FK
+    until S6.1), `ticket_number` > 0, status (default ISSUED). Plus the two
+    partial unique indexes and indexes.
+- `app/db/__init__.py` imports both model modules, so every table is
+  registered everywhere.
+- Migration `e1f323bd4791` was reviewed, applied, `alembic check` came back
+  clean, and downgrade -1 / upgrade worked.
+- Tests: `tests/integration/test_order_tables.py` (10, on a real DB, naming
+  the constraint that fires). The model test and conftest cleanup now
+  include the new tables, with the cleanup list moved into an `ALL_TABLES`
+  constant.
+- `learning/07b-transactions.md` and
+  `learning/examples/s3_1/transaction_demo.py`.
+
+**Ran it:**
+- 157/157 tests passed; ruff and mypy are clean.
+- Transaction demo: as separate steps, a failed second write left a
+  half-done order; in one transaction, both rolled back together. The
+  database was unchanged afterwards.
+
+**Schema decision:** `orders.tier_id` and `orders.quantity` were added
+beyond the CLAUDE.md column list, because the spec's rehydrate formula and
+purchase cap need them (recorded in `docs/design.md`).
+
+**Comfort check for Phase C:** not asked (learning deferred).
+
+**Key concepts:** transactions and ACID, commit and rollback, savepoints,
+UUID primary keys, partial unique indexes, NULLs in unique indexes.
 
 **Understanding check:** deferred to the end of the project.

@@ -39,6 +39,9 @@ from app.db.session import create_session_factory  # noqa: E402
 from app.main import app  # noqa: E402
 from app.redis.client import build_redis_client  # noqa: E402
 
+# Every table the migrations create, emptied after each test that used the database.
+ALL_TABLES = ["users", "events", "tiers", "refresh_tokens", "orders", "tickets"]
+
 
 @pytest.fixture(scope="session")
 def postgres_url() -> Iterator[str]:
@@ -79,9 +82,7 @@ async def client(db_engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
 
     # A clean slate, so no test depends on what another left behind.
     async with db_engine.begin() as connection:
-        await connection.execute(
-            text("TRUNCATE users, events, tiers, refresh_tokens RESTART IDENTITY CASCADE")
-        )
+        await connection.execute(text(f"TRUNCATE {', '.join(ALL_TABLES)} RESTART IDENTITY CASCADE"))
 
 
 @pytest.fixture(scope="session")

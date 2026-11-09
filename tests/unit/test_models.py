@@ -30,7 +30,14 @@ def check_constraint_names(table: Table) -> set[str]:
 
 
 def test_all_tables_are_registered() -> None:
-    assert set(Base.metadata.tables) == {"users", "events", "tiers", "refresh_tokens"}
+    assert set(Base.metadata.tables) == {
+        "users",
+        "events",
+        "tiers",
+        "refresh_tokens",
+        "orders",
+        "tickets",
+    }
 
 
 def test_user_email_and_username_are_unique() -> None:

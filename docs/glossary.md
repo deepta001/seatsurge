@@ -398,3 +398,16 @@ Plain-English meanings of every technical term, with where it first appears.
 | Wall time | Real elapsed time, as a clock on the wall would show. | Demo output |
 | Throughput | How many requests are completed per second. | The S2.9 performance finding |
 | Latency | How long one request takes. | `latency_probe` measurements |
+
+## Orders and transactions (S3.1)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| Transaction | A group of database changes that all happen, or none do. | `engine.begin()`, `session.commit()` |
+| ACID | Atomic, Consistent, Isolated, Durable: the four promises of a transaction. | `learning/07b-transactions.md` |
+| Commit / rollback | Make a transaction's changes permanent / undo them all. | Every write path |
+| Savepoint | A smaller transaction inside a bigger one that can be undone on its own. | `begin_nested()` in demos |
+| Order | A confirmed purchase request: PENDING until tickets are issued. | `orders` table |
+| Ticket | One issued admission, with a unique number in its tier (and a seat, for reserved seating). | `tickets` table |
+| Partial unique index | A uniqueness rule that only applies to rows matching a condition (e.g. `status = 'ISSUED'`). | `uq_tickets_issued_seat`, `uq_tickets_issued_number` |
+| UUID primary key | A random 128-bit id instead of 1, 2, 3...; unguessable and safe to show in URLs. | `orders.id` |
