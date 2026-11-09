@@ -804,3 +804,25 @@ Each layer was tested on its own, and broken on purpose:
   can't be skipped.
 - **Known gap:** behind nginx, the client IP is nginx's until forwarded
   addresses are trusted (S8.1).
+
+### Security hardening (S7.2)
+The full audit is in `docs/security-checklist.md`. The decisions:
+- **CORS from an allowlist, credentials off:** browsers only let a page call
+  another origin if that origin's API says so. The API names the allowed
+  front-ends in `CORS_ORIGINS`; `"*"` is refused. Tokens travel in the
+  `Authorization` header (no cookies), so `allow_credentials` stays off.
+- **Refuse to start with a placeholder secret:** better a clear startup
+  error than a production system running on the password printed in
+  `.env.example`.
+- **Errors never echo or explain internals (rule 10):**
+  - 422 names the field and the rule, not the submitted value;
+  - 500 is generic plus a `correlation_id`;
+  - the traceback is logged under that id, so a user's report can be
+    matched to the exact log line.
+  - Structured JSON logs with request-wide correlation ids come in S8.2.
+- **A pinned route list:** a test lists every route. Adding one means
+  updating the test on purpose, which keeps debug and simulation endpoints
+  out (section 9).
+- **Logging and migrations:** Alembic's `fileConfig` must not disable
+  existing loggers, otherwise any process that migrates in-process loses
+  its own error logs.

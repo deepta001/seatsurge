@@ -21,7 +21,10 @@ from app.db.base import Base
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False: by default fileConfig silences every
+    # logger that already exists, so an app that runs migrations in-process
+    # (the test suite does) would lose its own error logs (found in S7.2).
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # The models are the "desired" schema; autogenerate diffs the real DB against this.
 target_metadata = Base.metadata

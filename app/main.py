@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.admin import router as admin_router
 from app.api.auth import router as auth_router
@@ -45,13 +46,35 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await app.state.db_engine.dispose()
 
 
+def api_docs_enabled(environment: str) -> bool:
+    """The interactive API docs: handy locally, off in production.
+
+    In production they would map the whole API (including admin routes) for anyone.
+    """
+    return environment != "production"
+
+
+docs = api_docs_enabled(settings.environment)
 app = FastAPI(
     title=settings.app_name,
     description="A ticket booking backend that never oversells under heavy concurrency.",
     version="0.1.0",
     lifespan=lifespan,
+    docs_url="/docs" if docs else None,
+    redoc_url="/redoc" if docs else None,
+    openapi_url="/openapi.json" if docs else None,
 )
 register_error_handlers(app)
+# Only the listed browser origins may call the API cross-origin. No cookies are
+# used (tokens travel in the Authorization header), so credentials stay off.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
+    allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
+    expose_headers=["Retry-After", "X-Correlation-ID"],
+)
 # Outermost layer: oversized bodies are refused before any route reads them.
 app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_body_bytes)
 app.include_router(health_router)

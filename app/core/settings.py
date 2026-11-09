@@ -7,7 +7,7 @@ asks `get_settings()` instead of reading environment variables directly.
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -73,6 +73,28 @@ class Settings(BaseSettings):
     # How long a refresh token stays valid if unused. Each use replaces it
     # with a fresh one, so an active user stays signed in indefinitely.
     refresh_token_days: int = Field(default=7, gt=0, le=90)
+
+    # Browser front-ends allowed to call this API from another origin (CORS),
+    # e.g. ["https://tickets.example.com"]. Empty = no cross-origin access.
+    # Set as JSON in .env: CORS_ORIGINS=["https://tickets.example.com"].
+    cors_origins: list[str] = Field(default_factory=list)
+
+    @field_validator("cors_origins")
+    @classmethod
+    def no_wildcard_origin(cls, origins: list[str]) -> list[str]:
+        # "*" would let any website call the API from a visitor's browser.
+        if "*" in origins:
+            raise ValueError("list the allowed origins explicitly; '*' is not allowed")
+        return origins
+
+    @field_validator("database_url", "redis_url", "jwt_secret_key")
+    @classmethod
+    def not_a_placeholder(cls, value: SecretStr) -> SecretStr:
+        # .env.example ships CHANGE_ME placeholders; starting with one would
+        # mean running with a password that is printed in the repository.
+        if "CHANGE_ME" in value.get_secret_value():
+            raise ValueError("still the CHANGE_ME placeholder from .env.example")
+        return value
 
 
 @lru_cache

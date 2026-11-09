@@ -50,6 +50,7 @@ checked. The teach-back for all of them happens at the end.
 - S6.2b Buying held seats (added step): built, not checked.
 - S6.3 Seat tests, including double-sell protection (test 4b): built, not checked.
 - S7.1 Rate limiting (test 14): built, not checked.
+- S7.2 Security hardening checklist: built, not checked.
 
 ## Shaky topics
 
@@ -2066,5 +2067,64 @@ from nginx's IP until forwarded addresses are trusted; that's part of S8.1.
 **Key concepts:** sliding-window rate limiting, server-side time, failing
 open vs closed, keeping personal data out of cache keys, 429 and
 Retry-After.
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S7.2: Security hardening checklist (2026-11-09)
+
+**Audit:** every item of CLAUDE.md section 9 (plus rule 10) was checked;
+the result is `docs/security-checklist.md` (status, how, proof for each).
+Two items are pending because their parts don't exist yet: `/metrics` not
+being public (S8.2) and non-root containers (S8.1).
+
+**Fixed:**
+- **CORS:** `CORS_ORIGINS` from env (empty = no cross-origin access); `"*"`
+  is refused at startup; credentials off (tokens travel in headers);
+  explicit methods and headers.
+- **Placeholder secrets:** settings refuse `CHANGE_ME` in the database URL,
+  Redis URL or JWT secret.
+- **422s no longer echo input:** `{error: "validation_error", message,
+  fields: [{field, problem}]}`, so a rejected password isn't sent back.
+- **Unexpected errors:** a generic 500 `{error: "internal_error", message,
+  correlation_id}` plus an `X-Correlation-ID` header; the exception is
+  logged with the same id.
+- **API docs off in production** (`api_docs_enabled()`).
+- **The Alembic logging bug** (below).
+
+**Tests:** `tests/integration/test_security_hardening.py` (7). One pins the
+exact list of routes, so a debug or test endpoint can't slip in.
+
+**Ran it:**
+- 305/305 tests passed; ruff, mypy and `alembic check` are clean.
+- Mutation check, with five broken versions, each caught:
+  1. CORS allowing every origin;
+  2. FastAPI's default 422;
+  3. FastAPI's default 500;
+  4. Alembic silencing loggers again;
+  5. a sneaky `/debug/reset` route.
+- Live against the API:
+  - a short password gave the new 422, which names `body.password` and the
+    rule, but not the value;
+  - a preflight from `https://evil.example` got 400 with no
+    `Access-Control-Allow-Origin`;
+  - `/docs` returned 200 locally.
+
+**Debugging moments:**
+1. **A real bug, found by the 500 test:** the test passed alone but failed
+   after other tests, because no log record was captured. The cause was
+   `migrations/env.py` calling `fileConfig(...)`, which by default
+   **disables every existing logger**. The test database fixture runs
+   migrations, so the app's error logger went silent. Fixed with
+   `disable_existing_loggers=False`.
+2. This FastAPI version wraps included routers in `app.routes`, so the
+   route-list test walks into them.
+3. Splatting a plain dict into `FastAPI(...)` lost the argument types (it
+   even crashed mypy); a small bool helper replaced it.
+
+**Key concepts:** CORS and why browsers enforce it, not echoing secrets,
+correlation ids, fail-safe configuration (refuse to start), allowlisting
+routes.
 
 **Understanding check:** deferred to the end of the project.

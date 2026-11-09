@@ -577,3 +577,13 @@ Plain-English meanings of every technical term, with where it first appears.
 | 429 Too Many Requests | "Slow down"; `Retry-After` says how many seconds to wait. | `RateLimited` |
 | Fail open / fail closed | When a safety check can't run: let the request through (open) or refuse it (closed). | Login with Redis down |
 | Credential stuffing | Trying leaked email/password pairs across many accounts. | Per-IP login limit |
+
+## Security hardening (S7.2)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| CORS | Browser rule: a page may only call an API on another origin if that API allows the page's origin. | `CORS_ORIGINS`, `CORSMiddleware` |
+| Origin | Scheme + host + port of a web page, e.g. `https://tickets.example.com`. | CORS |
+| Preflight | The browser's `OPTIONS` request asking "may I?" before a cross-origin call. | CORS test |
+| Correlation id | A random id attached to an error and its log entry, so the two can be matched. | 500 responses |
+| Allowlist | A list of what is permitted; anything not on it is refused. | CORS, the pinned route list |
