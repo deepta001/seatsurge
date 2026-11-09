@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     database_url: SecretStr
     redis_url: SecretStr
 
+    # Postgres connections per process: up to pool_size + max_overflow open at
+    # once. All processes together must stay under Postgres's max_connections
+    # (100): 3 api x 15 + worker 15 = 60 (docs/design.md, S8.1).
+    db_pool_size: int = Field(default=5, ge=1, le=50)
+    db_max_overflow: int = Field(default=10, ge=0, le=50)
+
     # Per process. Three API replicas use 3x this many Redis connections.
     redis_max_connections: int = Field(default=50, gt=0, le=1000)
     # How long a request waits for a free Redis connection before failing.

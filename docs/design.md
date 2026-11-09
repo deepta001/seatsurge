@@ -850,3 +850,50 @@ The full audit is in `docs/security-checklist.md`. The decisions:
 - **Known trade-offs:** a flag lost between SADD and a crash only delays an
   update until the next change; SSE through nginx needs buffering off
   (`X-Accel-Buffering: no` is sent; S8.1 must keep it).
+
+### Three replicas behind nginx (S8.1)
+- **One image, three roles:** `migrate` (runs `alembic upgrade head` once,
+  then exits), `api` (x3) and `worker` share one image; Compose picks the
+  command. Alternative: an image per role. One image means the worker and
+  the API can never run different versions of the code.
+- **Migrations as their own one-shot service:** the api and worker start only
+  after it exits successfully. If each replica migrated on startup, three
+  would race to change the schema at once.
+- **nginx round robin, nothing else:** the replicas are stateless (JWT auth,
+  all state in Postgres and Redis), so any replica can serve any request and
+  plain round robin is enough. nginx re-resolves `api` every 10 s (`resolve`),
+  so a restarted replica is found again. POSTs are never retried on another
+  replica (nginx's default), because the first one may already have acted.
+- **Only nginx is reachable:** the api replicas publish no ports.
+- **The real client IP, safely:** uvicorn's `--proxy-headers` takes the
+  client address from `X-Forwarded-For`, but only for requests from nginx's
+  fixed address (`FORWARDED_ALLOW_IPS`), and nginx overwrites the header with
+  the address it saw. Without this, every request would look like it came
+  from nginx (one shared per-IP login limit for everyone); trusting the
+  header from anyone would let a client pick a new IP per guess. A mutation
+  check (trust everyone + append) let 25 of 25 guesses through.
+- **SSE through nginx:** `proxy_buffering off` and a 1 h read timeout on the
+  stream route, so events pass through at once (the app also sends
+  `X-Accel-Buffering: no`).
+- **Non-root containers:** `USER appuser` in the Dockerfile; the unprivileged
+  nginx image. A bug in the app can't change system files in its container.
+
+**Connection budget (CLAUDE.md section 12).** Postgres allows 100 connections
+(`max_connections` default). Each process uses at most
+`db_pool_size + db_max_overflow` = 5 + 10 = 15.
+
+```
+3 api replicas x 15 = 45
+1 worker       x 15 = 15
+total               = 60  < 100   (leaves room for migrate, psql and admin tools)
+```
+
+`tests/unit/test_deploy_config.py` fails if the defaults ever exceed this.
+Redis: 50 connections per process x 4 = 200 (+1 subscription per api
+process), far below Redis's default limit of 10,000 clients.
+
+**Measuring honestly:** the first 1,000-buyer run through nginx took ~37 s.
+A standard-library probe showed 1,000 new connections through Docker and
+nginx are answered in ~1.5 s; the time was the httpx client's connection
+pool, not the server. No throughput numbers are claimed until the Locust
+load test (S8.3).

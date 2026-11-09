@@ -593,3 +593,12 @@ Plain-English meanings of every technical term, with where it first appears.
 | Fan-out | One incoming message copied to many receivers. | `LiveUpdates._deliver` |
 | Backpressure | What to do when a receiver is slower than the sender; here, drop its oldest message. | `offer()` in `app/api/live.py` |
 | Keep-alive | A small message sent on an idle connection so proxies don't close it. | SSE `: keep-alive` lines |
+| Container image | A packaged snapshot of an app and everything it needs to run; containers are started from it. | `Dockerfile` |
+| Replica | One of several identical copies of a process, sharing the work. | `api` with `replicas: 3` |
+| Load balancer | A server that spreads incoming requests over several replicas. | nginx, `deploy/nginx.conf` |
+| Round robin | Each new request goes to the next replica in turn. | nginx `upstream api` |
+| Reverse proxy | A server that receives requests on behalf of others and forwards them. | nginx |
+| X-Forwarded-For | A header in which a proxy tells the app the original client's IP. | nginx, `FORWARDED_ALLOW_IPS` |
+| Stateless service | Keeps nothing between requests in its own memory, so any replica can serve any request. | the api replicas |
+| Non-root container | A container whose process runs as a normal user, not the all-powerful root. | `USER appuser` |
+| Connection pool | A set of open database connections that requests borrow and return. | `db_pool_size`, `db_max_overflow` |

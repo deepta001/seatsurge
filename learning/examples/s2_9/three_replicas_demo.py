@@ -13,6 +13,11 @@ Then, from the project root:
 
     uv run python -m learning.examples.s2_9.three_replicas_demo --buyers 1000 --seats 100
 
+Or, with the full Docker stack up (S8.1), send every buyer through nginx:
+
+    uv run python -m learning.examples.s2_9.three_replicas_demo \\
+        --url http://127.0.0.1:8080 --skip-naive
+
 It creates a throwaway event, runs the sale, checks Redis and Postgres, runs
 the S2.1 naive version for comparison, and always deletes what it created.
 """
@@ -79,7 +84,7 @@ async def run_sale(
     async with httpx.AsyncClient(limits=limits, timeout=60) as http:
 
         async def buyer(user_id: int) -> httpx.Response:
-            replica = REPLICAS[user_id % len(REPLICAS)]  # round-robin, like nginx later
+            replica = REPLICAS[user_id % len(REPLICAS)]  # round-robin, like nginx
             token = create_access_token(user_id, UserRole.USER)
             key = str(uuid.uuid4())
             USED_IDEMPOTENCY_KEYS.append((user_id, key))
@@ -133,7 +138,10 @@ async def main() -> None:
     parser.add_argument("--buyers", type=int, default=1000)
     parser.add_argument("--seats", type=int, default=100)
     parser.add_argument("--skip-naive", action="store_true")
+    parser.add_argument("--url", help="send every buyer here (e.g. nginx) instead")
     args = parser.parse_args()
+    if args.url:
+        REPLICAS[:] = [args.url]
 
     event_id: int | None = None
     tier_id: int | None = None
@@ -157,7 +165,7 @@ async def main() -> None:
         hold_records = sum([await redis.exists(hold_key(h)) for h in hold_ids])
         await redis.aclose()
 
-        print(f"Atomic Lua, 3 API processes: {args.buyers} buyers, {args.seats} seats")
+        print(f"Atomic Lua via {', '.join(REPLICAS)}: {args.buyers} buyers, {args.seats} seats")
         print(f"  outcomes  : {dict(sorted(outcomes.items()))}")
         print(f"  Redis     : counter={left}, hold records={hold_records}")
         print(f"  oversold  : {max(0, outcomes['201'] - args.seats)}   ({seconds:.2f}s wall time)")

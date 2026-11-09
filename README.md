@@ -40,6 +40,7 @@ try to buy the same limited seats at once.
 | **Rate limiting (test 14):** holds 20 per user and logins 5 per email and 20 per IP, per sliding 60 s window (configurable); 429 with Retry-After; atomic (40 simultaneous requests at a limit of 10 let exactly 10 through); login keeps working if Redis is down | holds, `POST /auth/login` | adversarial test 14 |
 | **Security checklist (S7.2):** every section-9 item audited in `docs/security-checklist.md`; CORS allowlist; refuses to start with placeholder secrets; errors never echo input or internals (500s carry a correlation id); API docs off in production; the route list is pinned so no debug endpoint can slip in | all routes | `tests/integration/test_security_hardening.py` |
 | **Live availability (S7.3):** SSE stream per event, fed by the worker through Redis pub/sub (so any API process can serve it; multi-replica is checked in S8.1); changes coalesced to at most 5 updates/s per event, each a fresh snapshot; one Redis subscription per process; an open stream holds no DB connection | `GET /events/{id}/stream` | `tests/integration/test_live_updates.py` |
+| **Three replicas behind nginx (S8.1):** one image for api and worker, non-root containers; migrations run once before anything starts; nginx round robin (9 requests -> 3/3/3; 1,000 buyers -> 334/334/333 with exactly 100 holds and 0 oversold); live updates reach viewers on every replica; clients can't fake their IP past the per-IP login limit; `/metrics` not routed | `docker compose up`, port 8080 | `tests/unit/test_deploy_config.py` + `learning/examples/s8_1/` (live checks) |
 | **Never oversell (test 1):** 500 concurrent HTTP buyers wanting 1-4 seats on 50 seats never take more than 50 (also with the counter rebuilt mid-rush); the test fails if the atomic script is swapped for naive check-then-take. A demo with 3 API processes on the dev stack: 1,000 buyers / 100 seats gave exactly 100 holds | `POST /events/{id}/holds` | `tests/concurrency/test_01_concurrent_holds_never_oversell.py` |
 | **Holds:** reserve 1-10 seats for 5 minutes via one atomic Redis Lua script; 409 sold_out or hold_limit_exceeded (10 per user per event); a missing counter is a 503, never zero. 300 simultaneous HTTP requests on 50 seats give exactly 50 holds | `POST /events/{id}/holds` | `tests/integration/test_holds_api.py`, `tests/integration/test_reserve_tier.py` |
 | A missing Redis counter is rebuilt from Postgres + active holds (one rebuild at a time, even for 50 simultaneous requests), never treated as zero; 503 only if the rebuild can't finish | automatic in `POST /events/{id}/holds` | adversarial test 12 |
@@ -90,7 +91,7 @@ Needs Python 3.12, [uv](https://docs.astral.sh/uv/), Git and Docker Desktop.
 ```
 cp .env.example .env                    # then replace every CHANGE_ME
 uv sync
-docker compose up -d --wait             # Postgres 16 + Redis 7
+docker compose up -d --wait postgres redis   # only the databases, for local dev
 uv run python -m alembic upgrade head   # create or update the tables
 uv run python -m scripts.seed_admin --email you@example.com --username you
 uv run python -m uvicorn app.main:app --reload
@@ -98,6 +99,17 @@ uv run python -m uvicorn app.main:app --reload
 
 Then open http://127.0.0.1:8000/docs, log in, click **Authorize**, and paste
 the access token.
+
+### The whole system in Docker (S8.1)
+
+```
+docker compose up -d --build --wait     # Postgres, Redis, migrations, 3 api, worker, nginx
+docker compose exec api python -m scripts.seed_admin --email you@example.com --username you
+```
+
+The API is then at http://127.0.0.1:8080 (nginx, round robin over 3 api
+replicas). The replicas have no port of their own. Stop with
+`docker compose down` (add `-v` to also delete the database volume).
 
 Checks (Docker must be running for the tests):
 

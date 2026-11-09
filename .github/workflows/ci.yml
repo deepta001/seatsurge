@@ -69,6 +69,15 @@ jobs:
       - name: Tests (pytest)
         run: uv run python -m pytest -v
 
+      # S8.1: the app image builds, and nginx accepts its config.
+      - name: App image builds
+        run: docker build --tag seatsurge-app .
+
+      - name: nginx config is valid
+        run: >-
+          docker run --rm -v "$PWD/deploy/nginx.conf:/etc/nginx/nginx.conf:ro"
+          nginxinc/nginx-unprivileged:1.28-alpine nginx -t
+
       - name: Migrations apply to an empty database
         run: uv run python -m alembic upgrade head
 

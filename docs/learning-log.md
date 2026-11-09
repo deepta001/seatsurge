@@ -52,6 +52,7 @@ checked. The teach-back for all of them happens at the end.
 - S7.1 Rate limiting (test 14): built, not checked.
 - S7.2 Security hardening checklist: built, not checked.
 - S7.3 Live updates with pub/sub and SSE: built, not checked.
+- S8.1 Three API replicas behind nginx: built, not checked.
 
 ## Shaky topics
 
@@ -2177,5 +2178,68 @@ uvicorn server streaming SSE over HTTP.
 **Key concepts:** pub/sub (fire-and-forget fan-out), Server-Sent Events,
 coalescing / debouncing, backpressure (bounded queues, drop oldest), why a
 long-lived response must not hold scarce resources.
+
+**Understanding check:** deferred to the end of the project.
+
+## S8.1: Three API replicas behind nginx (2026-11-09)
+
+**Built:** the whole system runs with one command, `docker compose up -d
+--build`:
+
+- `Dockerfile`: one image for api and worker; dependencies installed with
+  `uv sync --locked --no-dev`; runs as `appuser` (non-root). `.dockerignore`
+  keeps `.env` and caches out of the image.
+- `docker-compose.yml`: `migrate` (one-shot Alembic), `api` x3 (no published
+  ports), `worker`, and `nginx` (unprivileged image) on `127.0.0.1:8080`, on
+  a network with a fixed subnet so nginx has a fixed address.
+- `deploy/nginx.conf`: round robin over the replicas (re-resolved every
+  10 s), `X-Forwarded-For` overwritten with the real address, SSE unbuffered,
+  `/metrics` answered with 404, 16 KB body cap.
+- The api trusts forwarded addresses only from nginx (`FORWARDED_ALLOW_IPS`).
+- Explicit DB pool sizes (`DB_POOL_SIZE`, `DB_MAX_OVERFLOW`): 15 x 4 = 60
+  connections, under Postgres's 100.
+- CI now also builds the image and checks the nginx config with `nginx -t`.
+
+**Tests:** `tests/unit/test_deploy_config.py` (6): replicas and no ports,
+trusted proxy = nginx's address, header overwritten on every route, SSE
+unbuffered and `/metrics` hidden, non-root, pool budget.
+
+**Ran it:**
+- 317/317 tests passed; ruff, format and mypy are clean.
+- Mutation check, 6 broken configs, each caught: nginx appending the header,
+  trusting every proxy, publishing an api port, buffering SSE, running as
+  root, a pool too big for Postgres.
+- Live:
+  - `id` in each container: `appuser` (api, worker), `nginx` (nginx);
+  - 9 requests through nginx -> 3 per replica; `/metrics` -> 404; the api's
+    port 8000 is not reachable from the host;
+  - 25 wrong logins, each with a new email and a fake `X-Forwarded-For`:
+    20 x 401, then 429 (the real IP was limited). With the protections
+    removed (mutation): 25 x 401, nothing limited;
+  - 3 viewers through nginx landed one per replica, and all 3 received the
+    worker's update (47) after one hold of 3 seats;
+  - 1,000 buyers on 100 seats through nginx: 100 x 201, 900 x 409,
+    0 oversold, Redis counter 0, 100 hold records; spread 334/334/333.
+
+**Debugging moments:**
+1. **Slow demo, again not the server:** the 1,000-buyer run took ~37 s. Even
+   `/health/live` took ~36 s with 1,000 connections at once, while the
+   containers sat idle. A larger nginx listen backlog changed nothing (and
+   was undone). A standard-library probe (`connection_probe.py`) got 1,000
+   new connections answered in 1.5 s from Windows and 0.9 s inside Docker,
+   so the time was httpx's connection pool. Speed is measured with Locust in
+   S8.3, not with this demo.
+2. A test failed on a comment: "No `ports:` on purpose" contains `ports:`.
+   The check now matches only a real `ports:` key.
+3. PowerShell 5.1's `Set-Content -Encoding utf8` adds a byte-order mark; it
+   was stripped from the two config files a mutation run had touched.
+
+**Not done here:** a `Makefile` (`make up/test/load/verify`) comes with S8.3,
+where `load` and `verify` exist. `make` isn't installed on this Windows
+machine, so it will be checked in CI.
+
+**Key concepts:** container images and layers, stateless replicas, load
+balancing and round robin, reverse proxies and trusted forwarded headers,
+connection budgets, least privilege (non-root).
 
 **Understanding check:** deferred to the end of the project.

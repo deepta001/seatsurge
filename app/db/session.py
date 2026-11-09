@@ -19,6 +19,10 @@ def create_db_engine() -> AsyncEngine:
         # Checks a pooled connection still works before handing it out, so a
         # Postgres restart doesn't cause errors on the next request.
         pool_pre_ping=True,
+        # Explicit, because the total across all replicas must fit Postgres's
+        # connection limit (see Settings.db_pool_size).
+        pool_size=settings.db_pool_size,
+        max_overflow=settings.db_max_overflow,
     )
 
 

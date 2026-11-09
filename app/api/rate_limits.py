@@ -31,8 +31,10 @@ async def limit_holds(
 
 
 def client_ip(request: Request) -> str:
-    # Behind nginx (S8.1) this becomes nginx's address; trusting its
-    # X-Forwarded-For header is set up there.
+    # Behind nginx (S8.1) uvicorn's --proxy-headers replaces this with the
+    # X-Forwarded-For address, but only when the request came from nginx's
+    # own address (FORWARDED_ALLOW_IPS). nginx overwrites that header, so a
+    # client can't choose its own IP.
     return request.client.host if request.client else "unknown"
 
 

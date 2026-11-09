@@ -1,0 +1,15 @@
+# Never copied into the image. Above all .env: secrets reach containers only
+# as environment variables at run time, never baked into an image.
+.env
+.git
+.github
+.venv
+.venv-*
+**/__pycache__
+.mypy_cache
+.pytest_cache
+.ruff_cache
+docs
+learning
+tests
+loadtest
