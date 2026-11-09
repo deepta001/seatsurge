@@ -13,14 +13,13 @@ result is written with SET NX, so it can never overwrite a live counter.
 
 import asyncio
 import logging
+from dataclasses import dataclass
 
 from redis.asyncio import Redis
 from redis.exceptions import LockError, ResponseError
-from sqlalchemy import select
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Tier
-from app.db.order_models import Order, OrderStatus
 from app.redis.keys import (
     HOLDS_CONFIRMING_KEY,
     HOLDS_EXPIRY_KEY,
@@ -67,34 +66,59 @@ async def active_holds(redis: Redis, event_id: int, tier_id: int) -> dict[str, i
     return holds
 
 
-async def seats_in_pending_orders_without_a_live_hold(
-    session: AsyncSession, tier_id: int, live_hold_ids: set[str]
-) -> int:
-    """Seats in PENDING orders whose hold is no longer in Redis.
+@dataclass(frozen=True)
+class TierSnapshot:
+    """What Postgres says about one tier, all read at the same instant."""
 
-    A PENDING order normally still has its CONFIRMING hold in Redis, already
-    counted above, so counting the order too would subtract its seats twice.
-    Only orders whose hold has vanished (say, Redis was flushed) are added here.
+    event_id: int
+    capacity: int
+    sold: int
+    # hold_id -> seats, for every PENDING order on the tier.
+    pending_orders: dict[str, int]
+
+
+# ONE statement, so `sold` and the PENDING orders come from the same instant.
+# Two separate SELECTs could straddle a worker's commit (sold +3 and the order
+# turning CONFIRMED) and see neither side of it, missing those 3 seats.
+TIER_SNAPSHOT = text(
     """
-    rows = await session.execute(
-        select(Order.hold_id, Order.quantity).where(
-            Order.tier_id == tier_id, Order.status == OrderStatus.PENDING
-        )
-    )
-    return sum(quantity for hold_id, quantity in rows if hold_id not in live_hold_ids)
+    SELECT t.event_id, t.capacity, t.sold,
+           o.hold_id, o.quantity
+      FROM tiers t
+      LEFT JOIN orders o ON o.tier_id = t.id AND o.status = 'PENDING'
+     WHERE t.id = :tier_id
+    """
+)
+
+
+async def read_tier_snapshot(session: AsyncSession, tier_id: int) -> TierSnapshot | None:
+    rows = (await session.execute(TIER_SNAPSHOT, {"tier_id": tier_id})).all()
+    if not rows:
+        return None
+    first = rows[0]
+    pending = {row.hold_id: row.quantity for row in rows if row.hold_id is not None}
+    return TierSnapshot(first.event_id, first.capacity, first.sold, pending)
 
 
 async def compute_available(
     session: AsyncSession, redis: Redis, event_id: int, tier_id: int
 ) -> int:
-    tier = await session.get(Tier, tier_id)
-    if tier is None or tier.event_id != event_id:
+    """capacity - sold - live holds - PENDING orders whose hold is gone from Redis.
+
+    Postgres is read FIRST (one snapshot), Redis second. In that order, a
+    worker finishing an order in between can only make us count its seats
+    twice (too few available: safe), never zero times (too many: oversell).
+    """
+    snapshot = await read_tier_snapshot(session, tier_id)
+    if snapshot is None or snapshot.event_id != event_id:
         raise ValueError(f"tier {tier_id} does not belong to event {event_id}")
     holds = await active_holds(redis, event_id, tier_id)
     held = sum(holds.values())
-    pending = await seats_in_pending_orders_without_a_live_hold(session, tier_id, set(holds))
+    # A PENDING order normally still has its CONFIRMING hold in Redis, already
+    # counted in `held`; only orders whose hold vanished (Redis flushed) add here.
+    pending = sum(q for hold_id, q in snapshot.pending_orders.items() if hold_id not in holds)
     # Never negative: if the sums ever disagree, under-selling is the safe side.
-    return max(0, tier.capacity - tier.sold - held - pending)
+    return max(0, snapshot.capacity - snapshot.sold - held - pending)
 
 
 async def rehydrate_tier(session: AsyncSession, redis: Redis, event_id: int, tier_id: int) -> bool:

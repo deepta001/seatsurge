@@ -42,6 +42,7 @@ checked. The teach-back for all of them happens at the end.
 - S4.5 Ticket issuing with the DB backstop (test 4) and the unique-constraint demo: built, not checked.
 - S4.6 Typed errors, retries, dead letters and inventory release (test 9): built, not checked.
 - S4.7 Relay crash test (test 10) and the kill-the-relay demo: built, not checked.
+- S5.1 Reconcile logic and the admin endpoint: built, not checked.
 
 ## Shaky topics
 
@@ -1595,5 +1596,54 @@ actions after a commit.
 **Key concepts:** crash points and what state each leaves behind; the
 outbox as a durable to-do list; at-least-once plus idempotency as
 "exactly-once effect"; Postgres releasing a dead session's locks.
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## Phase D starts. S5.1: Reconcile logic and the admin endpoint (2026-11-09)
+
+The Phase C review was skipped (the student chose "Start S5.1").
+
+**What was built:**
+- `app/services/reconcile.py`: `reconcile_event` and `reconcile_tier`. Under
+  the same per-tier lock rehydrate uses, it GETDELs the counter, recomputes
+  it, and SETs (overwrites) it. While the counter is missing, new holds
+  wait for the lock holder instead of taking seats. It returns `before`
+  (null if missing) and `after`.
+- `POST /admin/events/{id}/reconcile` (`app/api/admin.py`): admin only; 404
+  for an unknown event.
+- **A race fixed in `compute_available` (also used by rehydrate):** it used
+  to read `sold` (Postgres), then the holds (Redis), then the PENDING orders
+  (Postgres). A worker finishing an order between those reads made its
+  seats appear in none of them, so the counter came out too high. Now
+  Postgres is read once (`TIER_SNAPSHOT`, one statement), then Redis. Any
+  change in between can only be counted twice, which undersells briefly
+  and never oversells.
+- `tests/integration/test_reconcile.py` (6 tests).
+
+**Ran it:**
+- 248/248 tests passed; ruff and mypy are clean.
+- Mutation check:
+  1. re-reading the PENDING orders after Redis (the old read order) was
+     caught by the race test, which got 50 instead of 47;
+  2. GET instead of GETDEL (holds keep taking seats during the recompute)
+     was caught by the rush test in 3 runs out of 3.
+- The rush test (80 buyers, 50 seats, 3 reconciles during the rush) passed
+  5 runs in a row.
+- Live against the API: a 4-seat hold put the counter at 16; I set it to
+  999; reconcile as a normal user gave 403; as admin it gave
+  `{"before": 999, "after": 16}`, and the counter was back at 16. Only the
+  demo's own data was deleted.
+
+**Debugging moments:**
+1. The race in `compute_available` was found by reading the code while
+   planning this step, not by a failing test. The new test forces its exact
+   timing.
+
+**Key concepts:** reconciling a cache against the source of truth,
+consistent snapshots (one statement), read order deciding which way an
+error goes, pausing writers with a missing key plus a lock, operator
+endpoints.
 
 **Understanding check:** deferred to the end of the project.

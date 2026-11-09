@@ -606,3 +606,34 @@ Every place the relay can die leaves a recoverable state:
 The one order that would lose messages is "mark PUBLISHED, then XADD": a
 crash in between leaves a row that says PUBLISHED but was never sent. The
 relay never does that.
+
+## Phase D: recovery
+
+### Reconcile (S5.1)
+- **What:** `POST /admin/events/{id}/reconcile` recomputes every tier's
+  Redis counter and **overwrites** it. Rehydrate (S2.8) only fills a
+  missing counter; reconcile also fixes one that exists but is wrong. The
+  response shows `before` and `after`, so drift is visible.
+- **Formula (the same as rehydrate):** capacity - sold - seats in live holds
+  (HELD or CONFIRMING) - seats in PENDING orders whose hold is gone from
+  Redis.
+- **Pausing new holds while it recomputes:** under the tier's rehydrate
+  lock, the counter is removed with GETDEL. A reserve that arrives now sees
+  "not initialised" and waits on the lock (rule 4) instead of taking seats.
+  When the new value is SET, it carries on. Without the delete, a hold
+  taken during the recompute would be overwritten, and the counter would
+  claim seats that are actually held (the rush test catches exactly that).
+- **Read Postgres first, as one snapshot, then Redis:** a single SQL
+  statement reads `sold` and the PENDING orders at the same instant; Redis
+  is read after.
+  - If the worker finishes an order in between, its seats are counted twice
+    (as sold or pending, and as a CONFIRMING hold): available is briefly
+    too low.
+  - The old order (Postgres, Redis, Postgres) could count them zero times:
+    too high, an oversell at the Redis gate. Fixed in S5.1 for rehydrate
+    too.
+- **Releases during the recompute** (a hold expiring, or a FAILED order's
+  hold released) don't add to a missing counter, by design. The recompute
+  may then count those seats as held: too low, safe. Running reconcile
+  again corrects it.
+- **Not covered:** per-user held counts (`uhold:*`) aren't reconciled.

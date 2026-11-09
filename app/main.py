@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.api.admin import router as admin_router
 from app.api.auth import router as auth_router
 from app.api.body_limit import BodySizeLimitMiddleware
 from app.api.errors import register_error_handlers
@@ -60,6 +61,7 @@ app.include_router(events_router)
 app.include_router(public_events_router)
 app.include_router(holds_router)
 app.include_router(orders_router)
+app.include_router(admin_router)
 
 
 # `async def` lets the server handle other requests while this one waits on

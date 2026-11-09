@@ -513,3 +513,12 @@ Plain-English meanings of every technical term, with where it first appears.
 | Exactly-once effect | Messages may arrive more than once, but the result (tickets issued) happens once. | Outbox, then `run_once` |
 | `os._exit` | Ends a Python process immediately: no cleanup, no `finally`, like a real crash. | The S4.7 demo |
 | `pg_terminate_backend` | A Postgres function that kills another session; its transaction is rolled back and its locks are freed. | Test 10 |
+
+## Reconcile (S5.1)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| Reconcile | Comparing a copy (the Redis counter) with the source of truth and fixing the copy. | `POST /admin/events/{id}/reconcile` |
+| Drift | When a cached value slowly stops matching the truth. | `before` vs `after` |
+| Snapshot | A view of the data as of one instant; one SQL statement always sees one. | `TIER_SNAPSHOT` |
+| `GETDEL` | Redis: read a key and delete it in one atomic step. | `reconcile_tier()` |
