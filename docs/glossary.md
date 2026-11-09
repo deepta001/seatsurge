@@ -471,3 +471,12 @@ Plain-English meanings of every technical term, with where it first appears.
 | Pending entries list (PEL) | Entries handed out but not yet acknowledged, with who has them. | `XPENDING`, S4.6 retries |
 | `MKSTREAM` | Create the stream when creating the group, if it doesn't exist yet. | `ensure_group()` |
 | Blocking read | Redis holds the request open until data arrives or a timeout passes. | `BLOCK 1000` |
+
+## Idempotent processing (S4.4)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| Idempotent consumer | A message handler that does the same thing whether a message arrives once or many times. | `run_once()` |
+| De-duplication key | The value that identifies "the same message" across copies (here the outbox id). | `processed_messages.message_id` |
+| `ON CONFLICT DO NOTHING` | Postgres: if this insert would break a unique rule, insert nothing instead of raising an error. | `claim_message()` |
+| Claim | Recording "I'm handling this message" so nobody else does. | `claim_message()` |

@@ -25,7 +25,7 @@ async def sessions(db_engine: AsyncEngine) -> AsyncIterator[async_sessionmaker[A
     """A session factory on the test database; the outbox table is emptied afterwards."""
     yield create_session_factory(db_engine)
     async with db_engine.begin() as conn:
-        await conn.execute(text("TRUNCATE outbox_events RESTART IDENTITY"))
+        await conn.execute(text("TRUNCATE outbox_events, processed_messages RESTART IDENTITY"))
 
 
 async def add_rows(

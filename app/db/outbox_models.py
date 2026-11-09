@@ -55,3 +55,21 @@ class OutboxEvent(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ProcessedMessage(Base):
+    """One row per outbox message the worker has finished handling (CLAUDE.md section 6).
+
+    Written in the SAME transaction as the handler's work, so "done" and
+    "the work" commit or roll back together. A second delivery of the same
+    message finds the row and is skipped.
+    """
+
+    __tablename__ = "processed_messages"
+
+    # The outbox row id, not Redis's stream entry id: if the relay publishes
+    # a row twice, each copy gets a new entry id but keeps the same outbox id.
+    message_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
+    processed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

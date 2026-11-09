@@ -38,6 +38,7 @@ checked. The teach-back for all of them happens at the end.
 - S4.1 Outbox primer and a basic relay using SKIP LOCKED: built, not checked.
 - S4.2 Relay retries, backoff and the DEAD state (test 8): built, not checked.
 - S4.3 Redis Streams primer; a consumer-group reader: built, not checked.
+- S4.4 Idempotent processing (test 7) and the process-twice demo: built, not checked.
 
 ## Shaky topics
 
@@ -1346,5 +1347,52 @@ keeping a log table small.
 **Key concepts:** append-only logs, consumer groups, the pending entries
 list, ack-after-work (at-least-once), blocking reads, starting a group at 0
 vs `$`.
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S4.4: Idempotent processing; test 7 and the "process it twice" demo (2026-11-09)
+
+**What was built:**
+- The `processed_messages(message_id PK, processed_at)` table (model in
+  `app/db/outbox_models.py`, migration `3eba02378c23`). `message_id` is
+  the **outbox row id**, not the stream entry id, because a relay
+  duplicate gets a new entry id but keeps its outbox id.
+- `app/worker/idempotency.py`:
+  - `claim_message` does `INSERT ... ON CONFLICT DO NOTHING RETURNING`;
+    False means a duplicate.
+  - `run_once(session_factory, handler)` opens one transaction, claims the
+    message, then runs the handler with the same session. A duplicate
+    returns normally, so it gets acked.
+- Adversarial test 7 (3 tests). Ticket issuing is S4.5, so the test handler
+  adds the order's quantity to `tiers.sold`, the counter S4.5 builds on.
+  S4.5 extends test 7 to real tickets.
+- `learning/examples/s4_4/process_twice_demo.py`.
+- `tests/unit/test_models.py` (the table list), `ALL_TABLES` and the outbox
+  test plugin's cleanup now include `processed_messages`.
+
+**Ran it:**
+- 220/220 tests passed; ruff, mypy and `alembic check` are clean; the
+  migration was applied to the dev DB.
+- Mutation check, with three broken versions, each caught:
+  1. no claim;
+  2. the claim committed in its own transaction before the work (a crash
+     after the claim would silently lose the order);
+  3. keyed by the stream entry id instead of the outbox id.
+- The demo on the dev stack: one 2-seat order delivered twice gave
+  **sold = 4 without idempotency and sold = 2 with `run_once`**. It deleted
+  only its own user, event, tier, processed mark (a negative id, which can
+  never be a real outbox id) and stream.
+
+**Debugging moments:**
+1. The full suite caught that `test_all_tables_are_registered` lists every
+   table: a guard test doing its job when a new table appears. The new
+   table was added to the list.
+
+**Key concepts:** idempotency for consumers, recording "done" in the same
+transaction as the work, `ON CONFLICT DO NOTHING`, how a unique key makes
+concurrent duplicates wait for each other, choosing the right
+de-duplication key.
 
 **Understanding check:** deferred to the end of the project.

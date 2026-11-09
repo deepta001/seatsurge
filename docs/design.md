@@ -479,3 +479,31 @@ backstops, no hot rows) get their own sections when those parts are built.
   handler exists. Running it earlier would have nothing real to do.
 - **Still to come:** trimming the stream (`XTRIM`) once entries are acked,
   and the `processed_messages` de-duplication (S4.4).
+
+### Idempotent processing (S4.4)
+- **Why:** delivery is at-least-once. Duplicates come from a relay crash
+  after XADD but before marking PUBLISHED, and from a worker crash after
+  committing but before XACK (redelivered in S4.6). Processing a duplicate
+  must change nothing.
+- **How:** `run_once` opens one transaction, inserts the message id into
+  `processed_messages` (`ON CONFLICT DO NOTHING`), and runs the handler in
+  that same transaction. If the insert finds the id already there, it's a
+  duplicate: skip the work, return normally, and the consumer acks it.
+- **The same transaction is the key point.** If the "done" mark were
+  committed first and the work then crashed, the message would be marked
+  done with the work never done: a lost order. In one transaction, both
+  commit or neither does, and a redelivery tries again. The mutation check
+  showed this exact bug is caught by test 7.
+- **Concurrent duplicates:** two workers with copies of the same message
+  both INSERT the same primary key. Postgres makes the second wait for the
+  first transaction. If the first commits, the second sees a conflict and
+  skips; if it rolls back, the second does the work. No application locks
+  are needed.
+- **Key = the outbox id, not the stream entry id:** a re-published row gets
+  a fresh entry id, so keying by entry id would let relay duplicates
+  through.
+- **Alternative considered:** making each handler naturally idempotent
+  (e.g. "set status CONFIRMED" is safe to repeat), but "sold = sold + 2"
+  and "insert tickets" are not. One generic table protects every handler.
+- **Still to come:** deleting old `processed_messages` rows (they must be
+  kept longer than any message can be redelivered).
