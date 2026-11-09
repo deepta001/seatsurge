@@ -558,3 +558,12 @@ Plain-English meanings of every technical term, with where it first appears.
 | Seat key | `seat:{event}:{seat_id}`: exists while a hold has the seat; its value is the hold id. | Holds, release, seat map |
 | Sold set | `sold:{event}`: seat ids that can never be held again, plus a `built` marker. | `reserve_seats.lua`, `rebuild_sold_set()` |
 | `SISMEMBER` / `SADD` | Redis: test whether a set contains a value / add values to a set. | The sold set |
+
+## Buying seats (S6.2b)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| `integer[]` (ARRAY) | A Postgres column holding a list of numbers. | `orders.seat_ids` |
+| Partial unique index | A uniqueness rule that only applies to rows matching a condition (here: ISSUED tickets). | `uq_tickets_issued_seat` |
+| `MULTI` / `EXEC` | Redis transaction: queued commands run together, with nothing in between. | `rebuild_sold_set(force=True)` |
+| `SREM` | Redis: remove values from a set. | Cancel, failed orders |

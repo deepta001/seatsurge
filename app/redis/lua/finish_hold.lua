@@ -6,9 +6,16 @@
 -- Idempotent: a second call finds CONSUMED and changes nothing, so a
 -- redelivered message can safely run it again.
 --
+-- Reserved seating (S6.2b): the seats move from "held" to "sold": each is
+-- added to sold:{event} and its seat key (if it still points at this hold)
+-- is deleted. A missing sold set is NOT created here: a half-built set would
+-- look complete (rule 4); the next rebuild reads the tickets from Postgres.
+--
 -- KEYS: 1 = hold:{hold_id}   2 = holds:confirming   3 = uhold:{event}:{user}
+--       4 = sold:{event}     5.. = seat:{event}:{seat_id}, one per seat
 -- ARGV: 1 = hold_id   2 = event id   3 = user id (from the order, re-checked
 --       here so KEY 3 really belongs to this hold)
+--       4.. = the seat ids, in the same order as KEYS 5..
 --
 -- Returns:  1 = finished now
 --           0 = not CONFIRMING (already finished, or never confirmed): no change
@@ -35,6 +42,15 @@ if held - qty > 0 then
   redis.call('DECRBY', KEYS[3], qty)
 else
   redis.call('DEL', KEYS[3])
+end
+
+for i = 5, #KEYS do
+  if redis.call('EXISTS', KEYS[4]) == 1 then
+    redis.call('SADD', KEYS[4], ARGV[i - 1])
+  end
+  if redis.call('GET', KEYS[i]) == ARGV[1] then
+    redis.call('DEL', KEYS[i])
+  end
 end
 
 redis.call('HSET', hold, 'status', 'CONSUMED')

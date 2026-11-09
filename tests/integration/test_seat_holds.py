@@ -3,7 +3,6 @@
 import asyncio
 import random
 import uuid
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -12,67 +11,12 @@ from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from app.db.models import EventStatus, SeatingType
 from app.db.session import create_session_factory
 from app.redis.keys import hold_key, seat_key, sold_seats_key, user_hold_key
-from app.services.events import EventChanges, TierSpec, create_event, update_event
 from app.services.holds import create_seat_hold
-from app.services.payments import MockPaymentProvider
 from app.worker.sweeper import now_ms, sweep_expired_holds
-from tests.sales import Sale, bearer, confirm, hold, new_key
-
-
-@dataclass
-class Venue:
-    event_id: int
-    floor: list[int]  # seat ids in the Floor tier (8 seats)
-    balcony: list[int]  # seat ids in the Balcony tier (4 seats)
-
-
-@pytest.fixture
-async def venue(sale: Sale, db_engine: AsyncEngine) -> Venue:
-    """A published reserved-seating event: Floor x8, Balcony x4 (the app uses the test Redis)."""
-    async with create_session_factory(db_engine)() as session:
-        created = await create_event(
-            session,
-            created_by=sale.admin_id,
-            name="Theatre",
-            description=None,
-            starts_at=datetime.now(UTC) + timedelta(days=7),
-            venue="Hall",
-            city="Leeds",
-            seating=SeatingType.RESERVED,
-            tiers=[TierSpec("Floor", 5000, 8), TierSpec("Balcony", 3000, 4)],
-        )
-        await update_event(session, created.event.id, EventChanges(status=EventStatus.PUBLISHED))
-    async with db_engine.connect() as conn:
-        rows = (
-            await conn.execute(
-                text("SELECT id, tier_id FROM seats WHERE event_id = :e ORDER BY id"),
-                {"e": created.event.id},
-            )
-        ).all()
-    floor_tier = created.tiers[0].id
-    return Venue(
-        created.event.id,
-        [r.id for r in rows if r.tier_id == floor_tier],
-        [r.id for r in rows if r.tier_id != floor_tier],
-    )
-
-
-async def hold_seats(
-    client: AsyncClient, venue: Venue, seat_ids: list[int], user_id: int = 1, key: str | None = None
-) -> Response:
-    return await client.post(
-        f"/events/{venue.event_id}/holds",
-        json={"seat_ids": seat_ids},
-        headers={**bearer(user_id), "Idempotency-Key": key or new_key()},
-    )
-
-
-async def seat_states(client: AsyncClient, venue: Venue) -> dict[int, str]:
-    seats = (await client.get(f"/events/{venue.event_id}/seats")).json()["seats"]
-    return {s["seat_id"]: s["state"] for s in seats}
+from tests.sales import Sale, bearer, hold, new_key
+from tests.seating import Venue, hold_seats, seat_states
 
 
 async def test_holding_seats_marks_them_held(
@@ -277,21 +221,3 @@ async def test_a_retried_seat_hold_returns_the_same_hold(client: AsyncClient, ve
     again = await hold_seats(client, venue, [venue.floor[0]], key=key)
 
     assert again.json() == first.json()
-
-
-async def test_a_seat_hold_cannot_be_confirmed_yet(
-    client: AsyncClient,
-    venue: Venue,
-    redis: Redis,
-    buyers: list[int],
-    payments: MockPaymentProvider,
-) -> None:
-    hold_id = (await hold_seats(client, venue, [venue.floor[0]], user_id=buyers[0])).json()[
-        "hold_id"
-    ]
-
-    response = await confirm(client, hold_id, buyers[0])
-
-    # Until S6.2b, buying specific seats is refused clearly, and the hold is untouched.
-    assert (response.status_code, response.json()["error"]) == (422, "seat_purchase_not_available")
-    assert await redis.hget(hold_key(hold_id), "status") == "HELD"

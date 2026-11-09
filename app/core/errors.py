@@ -203,10 +203,3 @@ class SeatTaken(DomainError):
     status_code = 409
     code = "seat_taken"
     message = "One or more of those seats is no longer available."
-
-
-class SeatPurchaseNotAvailable(DomainError):
-    # Holding specific seats works (S6.2); buying them arrives in S6.2b.
-    status_code = 422
-    code = "seat_purchase_not_available"
-    message = "Buying reserved seats is not available yet."

@@ -2,7 +2,9 @@
 
 Each seat's state comes from where the truth lives:
 - SOLD: Postgres has an ISSUED ticket for it (the source of truth).
-- HELD: Redis has a `seat:{event}:{seat_id}` key for it (a live hold, S6.2).
+- HELD: Redis has a `seat:{event}:{seat_id}` key for it (a live hold, S6.2),
+  or a PENDING order in Postgres has claimed it (S6.2b; its hold key may be
+  gone after a Redis flush).
 - AVAILABLE: neither.
 A seat that is both (should never happen) is reported SOLD.
 """
@@ -19,6 +21,7 @@ from app.db.models import SeatingType
 from app.db.order_models import Ticket, TicketStatus
 from app.db.seat_models import Seat
 from app.redis.keys import seat_key
+from app.redis.seat_scripts import seats_in_pending_orders
 from app.services.events import get_public_event
 
 # One MGET per this many seats, so a big map never sends one enormous command.
@@ -74,6 +77,7 @@ async def get_seat_map(session: AsyncSession, redis: Redis, event_id: int) -> li
         )
     )
     held = await held_seat_ids(redis, event_id, [seat.id for seat in seats])
+    held |= await seats_in_pending_orders(session, event_id)
 
     def state_of(seat_id: int) -> SeatState:
         if seat_id in sold:

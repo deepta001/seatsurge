@@ -1,7 +1,8 @@
 """Python side of reserved seating in Redis: reserve_seats.lua and the sold-set rebuild.
 
-`sold:{event}` lists the seats that can never be held again: those with an
-ISSUED ticket. It always contains SOLD_SET_MARKER once built, so a missing
+`sold:{event}` lists the seats that can't be held: those with an ISSUED
+ticket, plus (after a rebuild) those claimed by PENDING orders, whose hold
+keys may be gone. It always contains SOLD_SET_MARKER once built, so a missing
 set means "not built yet", never "nothing sold" (rule 4).
 """
 
@@ -13,7 +14,7 @@ from redis.exceptions import LockError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.order_models import Ticket, TicketStatus
+from app.db.order_models import Order, OrderStatus, Ticket, TicketStatus
 from app.redis.keys import HOLDS_EXPIRY_KEY, hold_key, seat_key, sold_seats_key, user_hold_key
 from app.redis.scripts import LUA_DIR
 
@@ -93,11 +94,33 @@ async def sold_seat_ids(session: AsyncSession, event_id: int) -> set[int]:
     return {seat_id for seat_id in rows if seat_id is not None}
 
 
-async def rebuild_sold_set(session: AsyncSession, redis: Redis, event_id: int) -> bool:
-    """Build `sold:{event}` from Postgres if it's missing. True once it exists.
+async def seats_in_pending_orders(session: AsyncSession, event_id: int) -> set[int]:
+    """Seats claimed by PENDING orders (bought, tickets not issued yet)."""
+    rows = await session.scalars(
+        select(Order.seat_ids).where(
+            Order.event_id == event_id,
+            Order.status == OrderStatus.PENDING,
+            Order.seat_ids.is_not(None),
+        )
+    )
+    return {seat for seats in rows if seats for seat in seats}
+
+
+async def unmark_sold(redis: Redis, event_id: int, seat_ids: set[int]) -> None:
+    """Take seats out of the sold set (never creates the set)."""
+    key = sold_seats_key(event_id)
+    if await redis.exists(key):
+        await redis.srem(key, *(str(seat) for seat in seat_ids))
+
+
+async def rebuild_sold_set(
+    session: AsyncSession, redis: Redis, event_id: int, *, force: bool = False
+) -> bool:
+    """Build `sold:{event}` from Postgres if it's missing (or always, with force). True if done.
 
     One process rebuilds at a time (a lock), like counter rehydration (S2.8);
-    the others wait briefly for it to appear.
+    the others wait briefly for it to appear. The set is replaced in one
+    MULTI/EXEC transaction, so nobody ever sees it half-built.
     """
     key = sold_seats_key(event_id)
     lock = redis.lock(
@@ -108,11 +131,15 @@ async def rebuild_sold_set(session: AsyncSession, redis: Redis, event_id: int) -
     if not await lock.acquire():
         return bool(await redis.exists(key))
     try:
-        if not await redis.exists(key):
-            sold = await sold_seat_ids(session, event_id)
-            # One SADD with the marker and every sold seat: the set appears
-            # complete or not at all, never half-built.
-            await redis.sadd(key, SOLD_SET_MARKER, *(str(seat) for seat in sold))
+        if force or not await redis.exists(key):
+            taken = await sold_seat_ids(session, event_id)
+            taken |= await seats_in_pending_orders(session, event_id)
+            # DEL + one SADD (the marker and every taken seat) as one
+            # transaction: the set is complete or absent, never half-built.
+            async with redis.pipeline(transaction=True) as pipe:
+                pipe.delete(key)
+                pipe.sadd(key, SOLD_SET_MARKER, *(str(seat) for seat in taken))
+                await pipe.execute()
     finally:
         try:
             await lock.release()

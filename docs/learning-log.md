@@ -47,6 +47,7 @@ checked. The teach-back for all of them happens at the end.
 - S5.3 Cancellation through the outbox (test 13): built, not checked.
 - S6.1 Reserved seating: data model and seat-map endpoint: built, not checked.
 - S6.2 reserve_seats.lua (all-or-nothing) and seat holds: built, not checked.
+- S6.2b Buying held seats (added step): built, not checked.
 
 ## Shaky topics
 
@@ -1891,5 +1892,69 @@ S6.3's double-sell tests. Until then, confirming a seat hold is a clear 422
 **Key concepts:** all-or-nothing as "check everything, then write
 everything" inside one atomic script; a marker member so an empty set and
 a missing set can be told apart; deleting only what you own.
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S6.2b: Buying held seats (a step added after S6.2) (2026-11-09)
+
+**What was built:**
+- `orders.seat_ids` (`integer[]`, NULL for general admission; migration
+  `52815b367d20`). `consume_hold.lua` returns the hold's seats; confirm
+  stores them on the order and in the `order.placed` payload. The temporary
+  S6.2 guard (`seat_purchase_not_available`) is removed.
+- `issue_tickets`:
+  - ticket n gets seat n of the order;
+  - a violation of `uq_tickets_issued_seat` (a seat that already has a live
+    ticket) becomes `InvariantViolation`, so the order is dead-lettered,
+    marked FAILED and released (S4.6).
+- `finish_hold.lua`:
+  - for each seat, SADD it to `sold:{event}` (only if the set exists: never
+    a half-built set) and delete its seat key (only if it points at this
+    hold).
+- Cancel puts the seats in its payload; `return_seats.lua` SREMs them from
+  the sold set (once per order; never creates the set).
+- `rebuild_sold_set` counts seats with ISSUED tickets **plus seats claimed
+  by PENDING orders** (their hold keys may be gone), and replaces the set in
+  one MULTI/EXEC. `force=True` is used by reconcile, which for a reserved
+  event rebuilds the sold set instead of counters (`tiers: []`).
+- The seat map shows seats of PENDING orders as HELD.
+- The failed-order compensation removes the order's seats from the sold
+  set, **except seats that have a live ticket from another order** (the
+  double-sell case: those really are sold).
+- The venue fixture moved into a shared plugin, `tests/seating.py`.
+- `tests/integration/test_seat_purchase.py` (6 tests). The S6.2
+  "can't confirm yet" test was removed with the guard.
+
+**Ran it:**
+- 288/288 tests passed; ruff, mypy and `alembic check` are clean.
+- Mutation check, with six broken versions, each caught:
+  1. compensation freeing seats that have live tickets;
+  2. finish creating a missing sold set;
+  3. the rebuild ignoring PENDING orders;
+  4. tickets without seats;
+  5. the seat map ignoring PENDING orders;
+  6. cancel not freeing seats in the sold set.
+- Live, with the real API and worker:
+  - Ann bought Stalls-1 and Stalls-2: tickets #1 and #2, both SOLD;
+  - Bo tried Stalls-2 and Stalls-3: 409 `seat_taken`;
+  - Ann cancelled: all four seats AVAILABLE, tickets #1 and #2 CANCELLED;
+  - Bo bought Stalls-2 and Stalls-3: tickets **#3 and #4** (numbers never
+    reused); Stalls-2 and Stalls-3 SOLD.
+  - The worker log had no errors. Only the demo's data was deleted.
+
+**Debugging moments:**
+1. The shell heredoc for the main edits failed to parse again and changed
+   nothing; the edits were written as a script file instead.
+2. A raw-SQL test needed `ARRAY[CAST(:s AS integer)]` (asyncpg sent the
+   value as text).
+3. My first test draft had two placeholder lines and hand-built JSON. They
+   were removed; the payload is now built with `json.dumps`.
+
+**Key concepts:** carrying server-side facts through every stage (hold to
+order to message to ticket), defence in depth for seats (Lua, then the
+partial unique index), never building a partial cache, compensations that
+must not undo what someone else legitimately owns.
 
 **Understanding check:** deferred to the end of the project.

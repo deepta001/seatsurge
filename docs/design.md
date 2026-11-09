@@ -730,3 +730,35 @@ recovers:
 - **Next (S6.2b):** buying seat holds (orders that remember their seats,
   tickets with `seat_id`, `finish_hold` moving seats into the sold set,
   cancel removing them, and the rebuild counting seats in PENDING orders).
+
+### Buying held seats (S6.2b)
+- **The seats travel with the purchase, always from the server:** the hold's
+  `seats` field, then `consume_hold.lua`'s result, then `orders.seat_ids`,
+  then the `order.placed` payload, then one ticket per seat (`seat_id`).
+  The client only ever sends a hold id at confirm (rule 1).
+- **Two layers against double-selling a seat:**
+  1. `reserve_seats.lua`: no two live holds on a seat, and no hold on a sold
+     seat.
+  2. The partial unique index `uq_tickets_issued_seat`: Postgres refuses a
+     second ISSUED ticket for a seat. The worker turns that into
+     `InvariantViolation`, so the order is FAILED and released (S4.6).
+- **Held to sold, after the commit (rule 6):** `finish_hold.lua` adds the
+  seats to `sold:{event}` and deletes their seat keys. It never creates a
+  missing sold set: a set holding only these seats would look complete and
+  hide every other sold seat. The next rebuild reads the tickets from
+  Postgres instead.
+- **What the sold set holds after a rebuild:** seats with ISSUED tickets
+  plus seats of PENDING orders. A PENDING order's hold (and its seat keys)
+  may have vanished in a flush, but Postgres still knows its seats, so they
+  stay unavailable until the order is CONFIRMED or FAILED. The seat map
+  shows them as HELD.
+- **Undoing without harming others:** a FAILED order's seats are removed
+  from the sold set, except seats that have a live ticket from another
+  order. That is exactly the double-sell case, where the seat really is
+  sold.
+- **Cancel:** the tickets are CANCELLED in Postgres (the partial index then
+  allows a new ticket for that seat), and the worker SREMs the seats from
+  the sold set once per order. Ticket numbers are never reused.
+- **Reconcile for reserved events** rebuilds the sold set (forced, in one
+  MULTI/EXEC) instead of tier counters, and re-queues PENDING orders as
+  before.

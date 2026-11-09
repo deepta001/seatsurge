@@ -23,7 +23,6 @@ from app.core.errors import (
     HoldNotFound,
     IdempotencyKeyReused,
     PurchaseLimitExceeded,
-    SeatPurchaseNotAvailable,
 )
 from app.core.settings import get_settings
 from app.db.models import Tier, User
@@ -35,7 +34,6 @@ from app.redis.confirm_scripts import (
     ConsumeOutcome,
     RevertHoldScript,
 )
-from app.redis.keys import hold_key
 from app.services.auth import violated_constraint
 from app.services.payments import MockPaymentProvider
 
@@ -61,10 +59,6 @@ async def confirm_hold(
 ) -> PlacedOrder:
     """Confirm the caller's hold and return the PENDING order, or raise a typed error."""
     now = now or datetime.now(UTC)
-    # Reserved-seat holds can be held (S6.2) but not bought until S6.2b. The
-    # seats field never changes after a hold is made, so this read is safe.
-    if await redis.hget(hold_key(hold_id), "seats"):
-        raise SeatPurchaseNotAvailable()
     consumed = await ConsumeHoldScript(redis)(
         hold_id,
         user_id=user_id,
@@ -133,6 +127,8 @@ async def _charge_and_record(
             idempotency_key=idempotency_key,
             status=OrderStatus.PENDING,
             total_cents=total_cents,
+            # The hold's own seats (reserved seating), never anything the client sent.
+            seat_ids=list(hold.seat_ids) or None,
         )
         session.add(order)
         await session.flush()  # assigns order.id inside the transaction
@@ -148,6 +144,7 @@ async def _charge_and_record(
                     "tier_id": hold.tier_id,
                     "quantity": hold.quantity,
                     "total_cents": total_cents,
+                    "seat_ids": list(hold.seat_ids),
                 },
             )
         )

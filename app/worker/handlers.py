@@ -21,6 +21,7 @@ from app.core.job_errors import PermanentError
 from app.db.order_models import Order, OrderStatus
 from app.redis.confirm_scripts import FinishHoldScript, FinishOutcome, ReturnSeatsScript
 from app.redis.scripts import HoldStatus, ReleaseHoldScript, ReleaseOutcome
+from app.redis.seat_scripts import sold_seat_ids, unmark_sold
 from app.services.tickets import issue_tickets
 from app.worker.dead_letters import Compensation
 from app.worker.idempotency import run_once
@@ -34,6 +35,15 @@ def payload_int(message: StreamMessage, field: str) -> int:
         return int(message.payload[field])
     except (KeyError, TypeError, ValueError) as error:
         raise PermanentError(f"message {message.entry_id} has no valid {field!r}") from error
+
+
+def payload_seat_ids(message: StreamMessage) -> list[int]:
+    """The order's seats (reserved seating), or [] for general admission and older messages."""
+    raw = message.payload.get("seat_ids") or []
+    try:
+        return [int(seat) for seat in raw]
+    except (TypeError, ValueError) as error:
+        raise PermanentError(f"message {message.entry_id} has invalid seat_ids") from error
 
 
 def payload_order_id(message: StreamMessage) -> uuid.UUID:
@@ -59,6 +69,7 @@ def finish_hold_after_commit(redis: Redis) -> Handler:
             str(message.payload["hold_id"]),
             event_id=payload_int(message, "event_id"),
             user_id=payload_int(message, "user_id"),
+            seat_ids=payload_seat_ids(message),
         )
         if outcome == FinishOutcome.KEY_MISMATCH:
             # Should never happen: the hold doesn't match its own order. Loud, but
@@ -85,6 +96,7 @@ def return_seats_after_commit(redis: Redis) -> Handler:
             event_id=payload_int(message, "event_id"),
             tier_id=payload_int(message, "tier_id"),
             quantity=payload_int(message, "quantity"),
+            seat_ids=payload_seat_ids(message),
         )
         logger.info("worker: cancelled order %s seats: %s", message.aggregate_id, outcome.name)
 
@@ -120,7 +132,11 @@ def fail_order_and_release_hold(
             if order.status == OrderStatus.PENDING:
                 order.status = OrderStatus.FAILED
             failed = order.status == OrderStatus.FAILED
-            hold_id, user_id = order.hold_id, order.user_id
+            hold_id, user_id, event_id = order.hold_id, order.user_id, order.event_id
+            # Reserved seating: seats a rebuild may have marked sold for this
+            # PENDING order. A seat that DOES have a live ticket (from another
+            # order: the double-sell backstop refused this one) stays sold.
+            seats_to_free = set(order.seat_ids or []) - await sold_seat_ids(session, event_id)
         if not failed:
             logger.error(
                 "worker: dead message for order %s, which is %s; seats kept", order_id, order.status
@@ -130,6 +146,8 @@ def fail_order_and_release_hold(
         outcome = await release(
             hold_id, new_status=HoldStatus.RELEASED, owner_id=user_id, include_confirming=True
         )
+        if seats_to_free:
+            await unmark_sold(redis, event_id, seats_to_free)
         # A real payment provider would be asked for a refund here (the mock
         # lives in the API process, so it can't be reached from the worker).
         logger.error(

@@ -10,10 +10,12 @@ import uuid
 from dataclasses import dataclass
 
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.job_errors import InvariantViolation, PermanentError
 from app.db.order_models import Order, OrderStatus, Ticket
+from app.services.auth import violated_constraint
 
 # Atomic: the capacity check and the increment happen in one statement, so
 # two workers can't both read "49 sold" and both write "50". Postgres locks
@@ -57,15 +59,29 @@ async def issue_tickets(session: AsyncSession, order_id: uuid.UUID) -> IssuedTic
     # This order owns the numbers just handed out: next_number - q + 1 .. next_number.
     first_number = last_number - order.quantity + 1
     numbers = list(range(first_number, last_number + 1))
+    # Reserved seating: ticket n is for seat n of the order. General admission: no seat.
+    seats: list[int | None] = list(order.seat_ids or []) or [None] * order.quantity
+    if len(seats) != order.quantity:
+        raise PermanentError(
+            f"order {order_id} has {len(seats)} seats for {order.quantity} tickets"
+        )
     session.add_all(
         Ticket(
             order_id=order.id,
             event_id=order.event_id,
             tier_id=order.tier_id,
+            seat_id=seat_id,
             ticket_number=number,
         )
-        for number in numbers
+        for number, seat_id in zip(numbers, seats, strict=True)
     )
     order.status = OrderStatus.CONFIRMED
-    await session.flush()  # surface any constraint error here, inside this transaction
+    try:
+        await session.flush()  # surface any constraint error here, inside this transaction
+    except IntegrityError as error:
+        if violated_constraint(error) == "uq_tickets_issued_seat":
+            # A seat that already has a live ticket: the last line of defence
+            # against double-selling a seat fired. Nothing is written.
+            raise InvariantViolation(f"order {order_id}: a seat already has a ticket") from error
+        raise
     return IssuedTickets(order.id, numbers)

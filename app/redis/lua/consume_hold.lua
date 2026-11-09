@@ -10,7 +10,8 @@
 --       4 = grace in ms (how long a confirm may take before the sweeper
 --           checks on it; the score in holds:confirming is expires_at + grace)
 --
--- Returns: {1, event, tier, qty}  started confirming
+-- Returns: {1, event, tier, qty, seats}  started confirming (seats: "12,13"
+--                                       for reserved seating, "" otherwise)
 --          {-1}  no such hold
 --          {-2}  belongs to someone else
 --          {-3}  already CONFIRMING or CONSUMED (a confirm already ran)
@@ -41,4 +42,4 @@ redis.call('ZADD', KEYS[3], expires_at + tonumber(ARGV[4]), ARGV[1])
 -- Keep the record for a day: the worker needs it until tickets are issued.
 redis.call('EXPIRE', hold, 86400)
 return {1, redis.call('HGET', hold, 'event'), redis.call('HGET', hold, 'tier'),
-        redis.call('HGET', hold, 'qty')}
+        redis.call('HGET', hold, 'qty'), redis.call('HGET', hold, 'seats') or ''}

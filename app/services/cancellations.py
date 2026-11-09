@@ -56,6 +56,7 @@ async def cancel_order(session: AsyncSession, *, user_id: int, order_id: uuid.UU
                 "event_id": order.event_id,
                 "tier_id": order.tier_id,
                 "quantity": order.quantity,
+                "seat_ids": list(order.seat_ids or []),
             },
         )
     )

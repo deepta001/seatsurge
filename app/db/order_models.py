@@ -15,11 +15,13 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     String,
     UniqueConstraint,
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -67,6 +69,10 @@ class Order(Base):
         server_default=OrderStatus.PENDING.value,
     )
     total_cents: Mapped[int]
+    # Reserved seating: the seats this order buys (from its hold, never the
+    # client). NULL for general admission. Kept on the order so Postgres alone
+    # knows which seats a PENDING order has claimed (S6.2b).
+    seat_ids: Mapped[list[int] | None] = mapped_column(ARRAY(Integer))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

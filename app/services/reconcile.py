@@ -23,9 +23,10 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import EventNotFound, InventoryNotReady
-from app.db.models import Event, Tier
+from app.db.models import Event, SeatingType, Tier
 from app.redis.keys import inventory_key, rehydrate_lock_key
 from app.redis.rehydrate import LOCK_SECONDS, compute_available
+from app.redis.seat_scripts import rebuild_sold_set
 
 # How long to wait if a rehydrate is holding a tier's lock right now.
 LOCK_WAIT_SECONDS = 5
@@ -87,8 +88,17 @@ class EventReconciled:
 
 async def reconcile_event(session: AsyncSession, redis: Redis, event_id: int) -> EventReconciled:
     """Reconcile every tier, then re-queue stuck orders. EventNotFound for an unknown event."""
-    if await session.get(Event, event_id) is None:
+    event = await session.get(Event, event_id)
+    if event is None:
         raise EventNotFound()
+    if event.seating == SeatingType.RESERVED:
+        # No counters: the seat keys and the sold set are the inventory. Rebuild
+        # the sold set from Postgres (sold + PENDING orders' seats), replacing it.
+        if not await rebuild_sold_set(session, redis, event_id, force=True):
+            raise InventoryNotReady()
+        requeued = (await session.scalars(REQUEUE_PENDING_ORDERS, {"event_id": event_id})).all()
+        await session.commit()
+        return EventReconciled([], len(requeued))
     tier_ids = (
         await session.scalars(select(Tier.id).where(Tier.event_id == event_id).order_by(Tier.id))
     ).all()
