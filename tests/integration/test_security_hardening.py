@@ -34,6 +34,7 @@ EXPECTED_ROUTES = {
     ("GET", "/events"),
     ("GET", "/events/{event_id}"),
     ("GET", "/events/{event_id}/seats"),
+    ("GET", "/events/{event_id}/stream"),
     ("POST", "/events/{event_id}/holds"),
     ("DELETE", "/holds/{hold_id}"),
     ("POST", "/holds/{hold_id}/confirm"),

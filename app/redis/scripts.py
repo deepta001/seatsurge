@@ -21,6 +21,7 @@ from app.redis.keys import (
     seat_key,
     user_hold_key,
 )
+from app.redis.live import mark_changed
 
 LUA_DIR = Path(__file__).parent / "lua"
 # Read once at import, not on every request.
@@ -53,6 +54,7 @@ class ReserveTierScript:
     def __init__(self, redis: Redis) -> None:
         # register_script sends the script once and then calls it by its SHA
         # fingerprint (EVALSHA), re-sending it only if Redis has forgotten it.
+        self._redis = redis
         self._script = redis.register_script(RESERVE_TIER_LUA)
 
     async def __call__(self, request: HoldRequest) -> ReserveOutcome:
@@ -77,7 +79,10 @@ class ReserveTierScript:
         code = await self._script(keys=keys, args=args)
         # ReserveOutcome(code) raises ValueError on an unexpected code, which
         # would mean the script and this wrapper are out of step: a bug.
-        return ReserveOutcome(int(code))
+        outcome = ReserveOutcome(int(code))
+        if outcome == ReserveOutcome.RESERVED:
+            await mark_changed(self._redis, request.event_id)
+        return outcome
 
 
 class ReleaseOutcome(enum.Enum):
@@ -157,4 +162,7 @@ class ReleaseHoldScript:
             "1" if include_confirming else "0",
         ]
         code = await self._script(keys=keys, args=args)
-        return ReleaseOutcome(int(code))
+        outcome = ReleaseOutcome(int(code))
+        if outcome == ReleaseOutcome.RELEASED:
+            await mark_changed(self._redis, int(event_id))
+        return outcome

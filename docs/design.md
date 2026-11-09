@@ -826,3 +826,27 @@ The full audit is in `docs/security-checklist.md`. The decisions:
 - **Logging and migrations:** Alembic's `fileConfig` must not disable
   existing loggers, otherwise any process that migrates in-process loses
   its own error logs.
+
+### Live updates (S7.3)
+- **Flag, then publish a fresh snapshot:** request handlers only SADD the
+  event id to `events:changed`. A worker task drains the set every 0.2 s
+  and publishes one snapshot per event read at that moment. Alternative:
+  publish from each request. That would send a message per hold (hundreds a
+  second in a rush), could send stale or out-of-order counts, and adds
+  latency to the purchase path. Coalescing gives at most 5 msg/s/event and
+  every message is current.
+- **Pub/sub, not a stream, for viewers:** live updates are disposable; if
+  one is missed the next snapshot replaces it. Pub/sub's fire-and-forget
+  delivery fits. Orders, which must never be lost, use a Stream instead.
+- **One subscription per process:** each API process subscribes once to
+  `chan:event:*` and fans out in memory. A Redis connection per viewer would
+  let page views exhaust the pool that holds and confirms need.
+- **Bounded per-viewer queues that drop the oldest:** every message is a
+  full snapshot, so only the newest matters; a slow client can't grow memory
+  or hold others up.
+- **No DB connection while streaming:** the endpoint uses a short session
+  closed before the stream starts (FastAPI keeps `Depends` resources open
+  until the response ends).
+- **Known trade-offs:** a flag lost between SADD and a crash only delays an
+  update until the next change; SSE through nginx needs buffering off
+  (`X-Accel-Buffering: no` is sent; S8.1 must keep it).

@@ -1,7 +1,8 @@
 """The worker process: background jobs that run beside the API (CLAUDE.md section 3).
 
-It runs three asyncio tasks side by side: the hold sweeper, the outbox
-relay, and the stream consumer that issues tickets. Run from the project root:
+It runs four asyncio tasks side by side: the hold sweeper, the outbox
+relay, the stream consumer that issues tickets, and the live publisher
+that announces availability changes. Run from the project root:
 
     uv run python -m app.worker.main
 """
@@ -13,6 +14,7 @@ from app.db.session import create_db_engine, create_session_factory
 from app.redis.client import create_redis_client
 from app.worker.consumer_loop import run_consumer
 from app.worker.handlers import build_compensations, build_handlers
+from app.worker.live_publisher import run_live_publisher
 from app.worker.relay import run_relay
 from app.worker.sweeper import run_sweeper
 
@@ -31,6 +33,7 @@ async def main() -> None:
             handlers = build_handlers(session_factory, redis)
             compensations = build_compensations(session_factory, redis)
             tasks.create_task(run_consumer(redis, handlers, compensations))
+            tasks.create_task(run_live_publisher(session_factory, redis))
     finally:
         await engine.dispose()
         await redis.aclose()

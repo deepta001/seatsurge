@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.order_models import Order, OrderStatus, Ticket, TicketStatus
 from app.redis.keys import HOLDS_EXPIRY_KEY, hold_key, seat_key, sold_seats_key, user_hold_key
+from app.redis.live import mark_changed
 from app.redis.scripts import LUA_DIR
 
 RESERVE_SEATS_LUA = (LUA_DIR / "reserve_seats.lua").read_text()
@@ -54,6 +55,7 @@ class ReserveSeatsScript:
     """Hold all the requested seats, or none. See app/redis/lua/reserve_seats.lua."""
 
     def __init__(self, redis: Redis) -> None:
+        self._redis = redis
         self._script = redis.register_script(RESERVE_SEATS_LUA)
 
     async def __call__(self, request: SeatHoldRequest) -> SeatReserveResult:
@@ -79,6 +81,8 @@ class ReserveSeatsScript:
         result = await self._script(keys=keys, args=args)
         outcome = SeatReserveOutcome(int(result[0]))
         taken = int(result[1]) if outcome == SeatReserveOutcome.SEAT_TAKEN else None
+        if outcome == SeatReserveOutcome.RESERVED:
+            await mark_changed(self._redis, request.event_id)
         return SeatReserveResult(outcome, taken)
 
 

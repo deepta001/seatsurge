@@ -5,6 +5,7 @@ and tests can swap these out with `app.dependency_overrides`.
 """
 
 from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING
 
 from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -27,10 +28,27 @@ def get_db_engine(request: Request) -> AsyncEngine:
     return engine
 
 
+if TYPE_CHECKING:
+    # Only for type hints: app.api.live itself imports this module.
+    from app.api.live import LiveUpdates
+
+
 def get_redis(request: Request) -> Redis:
     """The Redis client created at startup by `lifespan` in app/main.py."""
     redis: Redis = request.app.state.redis
     return redis
+
+
+def get_live_updates(request: Request) -> "LiveUpdates":
+    """The process's shared live-update subscription, started by `lifespan` (S7.3)."""
+    live: LiveUpdates = request.app.state.live
+    return live
+
+
+def get_session_factory(request: Request) -> async_sessionmaker[AsyncSession]:
+    """For long-lived responses (SSE) that must not keep a session for their whole life."""
+    session_factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    return session_factory
 
 
 async def get_db_session(request: Request) -> AsyncIterator[AsyncSession]:

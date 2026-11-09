@@ -587,3 +587,9 @@ Plain-English meanings of every technical term, with where it first appears.
 | Preflight | The browser's `OPTIONS` request asking "may I?" before a cross-origin call. | CORS test |
 | Correlation id | A random id attached to an error and its log entry, so the two can be matched. | 500 responses |
 | Allowlist | A list of what is permitted; anything not on it is refused. | CORS, the pinned route list |
+| Pub/sub | Redis publish/subscribe: a message goes to whoever is listening right now and is not stored. | `chan:event:{id}`, `app/api/live.py` |
+| Server-Sent Events (SSE) | A long HTTP response the server keeps writing `data:` lines to; browsers read it with `EventSource`. | `GET /events/{id}/stream` |
+| Coalescing | Merging many quick changes into one message about the latest state. | `app/worker/live_publisher.py` |
+| Fan-out | One incoming message copied to many receivers. | `LiveUpdates._deliver` |
+| Backpressure | What to do when a receiver is slower than the sender; here, drop its oldest message. | `offer()` in `app/api/live.py` |
+| Keep-alive | A small message sent on an idle connection so proxies don't close it. | SSE `: keep-alive` lines |

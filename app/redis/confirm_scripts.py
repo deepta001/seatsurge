@@ -16,6 +16,7 @@ from app.redis.keys import (
     sold_seats_key,
     user_hold_key,
 )
+from app.redis.live import mark_changed
 from app.redis.scripts import LUA_DIR
 
 CONSUME_HOLD_LUA = (LUA_DIR / "consume_hold.lua").read_text()
@@ -92,6 +93,7 @@ class FinishHoldScript:
     """CONFIRMING -> CONSUMED once tickets are issued. Safe to run any number of times."""
 
     def __init__(self, redis: Redis) -> None:
+        self._redis = redis
         self._script = redis.register_script(FINISH_HOLD_LUA)
 
     async def __call__(
@@ -107,7 +109,10 @@ class FinishHoldScript:
             ],
             args=[hold_id, str(event_id), str(user_id), *seat_ids],
         )
-        return FinishOutcome(int(result))
+        outcome = FinishOutcome(int(result))
+        if outcome == FinishOutcome.FINISHED:
+            await mark_changed(self._redis, event_id)
+        return outcome
 
 
 class ReturnOutcome(enum.Enum):
@@ -124,6 +129,7 @@ class ReturnSeatsScript:
     """Put a cancelled order's seats back on sale (counter or sold set), once per order."""
 
     def __init__(self, redis: Redis) -> None:
+        self._redis = redis
         self._script = redis.register_script(RETURN_SEATS_LUA)
 
     async def __call__(
@@ -143,4 +149,7 @@ class ReturnSeatsScript:
             ],
             args=[quantity, RETURN_MARKER_SECONDS, *seat_ids],
         )
-        return ReturnOutcome(int(result))
+        outcome = ReturnOutcome(int(result))
+        if outcome == ReturnOutcome.RETURNED:
+            await mark_changed(self._redis, event_id)
+        return outcome

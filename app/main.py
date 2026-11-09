@@ -18,6 +18,8 @@ from app.api.events import router as events_router
 from app.api.events_public import router as public_events_router
 from app.api.health import router as health_router
 from app.api.holds import router as holds_router
+from app.api.live import LiveUpdates
+from app.api.live import router as live_router
 from app.api.me import router as me_router
 from app.api.orders import router as orders_router
 from app.core.settings import get_settings
@@ -41,7 +43,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.redis = create_redis_client()
     # A mock: there are no real payments in this project (CLAUDE.md section 2).
     app.state.payments = MockPaymentProvider(failure_rate=settings.payment_failure_rate)
+    # One shared Redis subscription for every live-update viewer (S7.3).
+    app.state.live = LiveUpdates(app.state.redis)
+    await app.state.live.start()
     yield
+    await app.state.live.stop()
     await app.state.redis.aclose()
     await app.state.db_engine.dispose()
 
@@ -85,6 +91,7 @@ app.include_router(public_events_router)
 app.include_router(holds_router)
 app.include_router(orders_router)
 app.include_router(admin_router)
+app.include_router(live_router)
 
 
 # `async def` lets the server handle other requests while this one waits on

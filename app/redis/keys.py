@@ -13,6 +13,8 @@ HOLDS_CONFIRMING_KEY = "holds:confirming"
 ORDERS_STREAM_KEY = "stream:orders"
 # Messages the worker gave up on, kept for a human to inspect.
 DEAD_LETTER_STREAM_KEY = "stream:orders:dead"
+# Events whose availability changed since the live publisher last ran (a set).
+EVENTS_CHANGED_KEY = "events:changed"
 
 
 def inventory_key(event_id: int, tier_id: int) -> str:
@@ -53,3 +55,8 @@ def seat_key(event_id: int, seat_id: int) -> str:
 def sold_seats_key(event_id: int) -> str:
     """The set of seat ids that can never be held again (sold), plus a "built" marker."""
     return f"sold:{event_id}"
+
+
+def live_channel(event_id: int) -> str:
+    """Pub/sub channel carrying an event's live availability updates (S7.3)."""
+    return f"chan:event:{event_id}"

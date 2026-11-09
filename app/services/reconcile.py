@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import EventNotFound, InventoryNotReady
 from app.db.models import Event, SeatingType, Tier
 from app.redis.keys import inventory_key, rehydrate_lock_key
+from app.redis.live import mark_changed
 from app.redis.rehydrate import LOCK_SECONDS, compute_available
 from app.redis.seat_scripts import rebuild_sold_set
 
@@ -71,6 +72,7 @@ async def reconcile_tier(
         raw_before = await redis.getdel(counter)
         after = await compute_available(session, redis, event_id, tier_id)
         await redis.set(counter, after)
+        await mark_changed(redis, event_id)
     finally:
         try:
             await lock.release()

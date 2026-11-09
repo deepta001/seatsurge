@@ -51,6 +51,7 @@ checked. The teach-back for all of them happens at the end.
 - S6.3 Seat tests, including double-sell protection (test 4b): built, not checked.
 - S7.1 Rate limiting (test 14): built, not checked.
 - S7.2 Security hardening checklist: built, not checked.
+- S7.3 Live updates with pub/sub and SSE: built, not checked.
 
 ## Shaky topics
 
@@ -2126,5 +2127,55 @@ exact list of routes, so a debug or test endpoint can't slip in.
 **Key concepts:** CORS and why browsers enforce it, not echoing secrets,
 correlation ids, fail-safe configuration (refuse to start), allowlisting
 routes.
+
+**Understanding check:** deferred to the end of the project.
+
+## S7.3: Live updates with pub/sub and SSE (2026-11-09)
+
+**Built:** a live availability feed, `GET /events/{event_id}/stream`
+(Server-Sent Events), that works on every replica.
+
+- **Change flags:** each script wrapper that changes inventory (reserve,
+  release, reserve seats, finish hold, return seats) and reconcile adds the
+  event id to the Redis set `events:changed` (`app/redis/live.py`).
+- **Coalescing publisher** (`app/worker/live_publisher.py`), a fourth worker
+  task: every 0.2 s it pops the changed events, reads a FRESH snapshot for
+  each (`app/services/live_updates.py`) and PUBLISHes it to
+  `chan:event:{id}`. So at most 5 messages a second per event, and every
+  message is the current truth, never an intermediate or negative value.
+  A missing counter is left out of the snapshot, never shown as 0 (rule 4).
+  Reserved events send a `seat_map_changed` hint; viewers re-fetch the map.
+- **One subscription per API process** (`app/api/live.py`, `LiveUpdates`):
+  a pattern subscription to `chan:event:*`, fanned out to small per-viewer
+  queues. A slow viewer drops its OLDEST update, never blocks anyone else.
+- **The SSE endpoint:** current snapshot first, then each update, and a
+  keep-alive comment every 15 s. `X-Accel-Buffering: no` is set for nginx
+  (S8.1).
+
+**Tests:** `tests/integration/test_live_updates.py` (6), including a real
+uvicorn server streaming SSE over HTTP.
+
+**Ran it:**
+- 311/311 tests passed; ruff, format and mypy are clean.
+- Live demo: a viewer opened the stream and got `available=100` at once;
+  30 holds of 2 seats landed in 0.47 s and arrived as just 2 updates
+  (70, then 40). 40 is right: 100 - 30 x 2.
+
+**Debugging moments:**
+1. **A real bug:** the first endpoint used `Depends(get_db_session)`.
+   FastAPI keeps a dependency open until the response ends, and a stream
+   never ends, so every viewer held a database connection. About 15 viewers
+   would have used up the pool and blocked all purchases. Fixed by opening
+   a short session, closing it before streaming, and a test asserting that
+   an open stream holds 0 connections.
+2. **A slow demo that wasn't the app:** the first demo took ~22 s for 30
+   holds. Timing showed the API answers 30 parallel holds in 0.7 s, viewer
+   or not. The demo created a new `httpx.AsyncClient` per buyer, and each one
+   costs ~0.5 s of blocking setup (it builds a TLS context). One shared
+   client fixed it. Lesson: measure before blaming the system under test.
+
+**Key concepts:** pub/sub (fire-and-forget fan-out), Server-Sent Events,
+coalescing / debouncing, backpressure (bounded queues, drop oldest), why a
+long-lived response must not hold scarce resources.
 
 **Understanding check:** deferred to the end of the project.

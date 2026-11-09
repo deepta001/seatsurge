@@ -38,7 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engin
 from testcontainers.community.postgres import PostgresContainer  # noqa: E402
 from testcontainers.community.redis import RedisContainer  # noqa: E402
 
-from app.api.dependencies import get_db_session, get_redis  # noqa: E402
+from app.api.dependencies import get_db_session, get_redis, get_session_factory  # noqa: E402
 from app.db.session import create_session_factory  # noqa: E402
 from app.main import app  # noqa: E402
 from app.redis.client import build_redis_client  # noqa: E402
@@ -87,6 +87,7 @@ async def client(db_engine: AsyncEngine, redis: Redis) -> AsyncIterator[AsyncCli
             yield session
 
     app.dependency_overrides[get_db_session] = session_for_tests
+    app.dependency_overrides[get_session_factory] = lambda: session_factory
     # Login is rate limited in Redis (S7.1), so every API test needs one.
     app.dependency_overrides[get_redis] = lambda: redis
     # ASGITransport calls the app directly in this event loop: no server, no port.
