@@ -4,7 +4,7 @@
 #     -> the API at http://127.0.0.1:8080 (nginx in front of 3 api replicas)
 #   Stop: docker compose down
 # Passwords come from .env; Compose reads that file automatically.
-# Prometheus and Grafana are added in S8.2.
+#   Prometheus: http://127.0.0.1:9090   Grafana: http://127.0.0.1:3000 (admin + GRAFANA_ADMIN_PASSWORD)
 
 services:
   postgres:
@@ -108,6 +108,37 @@ services:
     networks:
       backend:
         ipv4_address: 172.28.5.10  # fixed, so the api can trust exactly this address
+
+  # ---- Observability (S8.2) --------------------------------------------------
+  # Prometheus scrapes every api replica and the worker; Grafana graphs it.
+  # Both listen on 127.0.0.1 only, and nginx never routes to either.
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on: [api, worker]
+    networks: [backend]
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      # No default credentials (CLAUDE.md section 9): Compose refuses to start
+      # without a password in .env.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on: [prometheus]
+    networks: [backend]
 
 networks:
   backend:

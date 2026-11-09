@@ -41,6 +41,7 @@ try to buy the same limited seats at once.
 | **Security checklist (S7.2):** every section-9 item audited in `docs/security-checklist.md`; CORS allowlist; refuses to start with placeholder secrets; errors never echo input or internals (500s carry a correlation id); API docs off in production; the route list is pinned so no debug endpoint can slip in | all routes | `tests/integration/test_security_hardening.py` |
 | **Live availability (S7.3):** SSE stream per event, fed by the worker through Redis pub/sub (so any API process can serve it; multi-replica is checked in S8.1); changes coalesced to at most 5 updates/s per event, each a fresh snapshot; one Redis subscription per process; an open stream holds no DB connection | `GET /events/{id}/stream` | `tests/integration/test_live_updates.py` |
 | **Three replicas behind nginx (S8.1):** one image for api and worker, non-root containers; migrations run once before anything starts; nginx round robin (9 requests -> 3/3/3; 1,000 buyers -> 334/334/333 with exactly 100 holds and 0 oversold); live updates reach viewers on every replica; clients can't fake their IP past the per-IP login limit; `/metrics` not routed | `docker compose up`, port 8080 | `tests/unit/test_deploy_config.py` + `learning/examples/s8_1/` (live checks) |
+| **Metrics and dashboard (S8.2):** Prometheus scrapes every api replica and the worker: request latency by route template, holds created/rejected by reason, orders placed/confirmed/failed (counted once, after commit), dead letters, hold expiries, outbox and stream backlog, Redis script latency, and `invariant_violations_total`, which every test asserts stays 0 unless it trips a backstop on purpose. Grafana dashboard provisioned from `deploy/grafana/`; both bound to 127.0.0.1, Grafana password from `.env`; `/metrics` not routed by nginx | Prometheus :9090, Grafana :3000 | `tests/integration/test_metrics.py` + the autouse guard in `tests/conftest.py` |
 | **Never oversell (test 1):** 500 concurrent HTTP buyers wanting 1-4 seats on 50 seats never take more than 50 (also with the counter rebuilt mid-rush); the test fails if the atomic script is swapped for naive check-then-take. A demo with 3 API processes on the dev stack: 1,000 buyers / 100 seats gave exactly 100 holds | `POST /events/{id}/holds` | `tests/concurrency/test_01_concurrent_holds_never_oversell.py` |
 | **Holds:** reserve 1-10 seats for 5 minutes via one atomic Redis Lua script; 409 sold_out or hold_limit_exceeded (10 per user per event); a missing counter is a 503, never zero. 300 simultaneous HTTP requests on 50 seats give exactly 50 holds | `POST /events/{id}/holds` | `tests/integration/test_holds_api.py`, `tests/integration/test_reserve_tier.py` |
 | A missing Redis counter is rebuilt from Postgres + active holds (one rebuild at a time, even for 50 simultaneous requests), never treated as zero; 503 only if the rebuild can't finish | automatic in `POST /events/{id}/holds` | adversarial test 12 |
@@ -108,7 +109,9 @@ docker compose exec api python -m scripts.seed_admin --email you@example.com --u
 ```
 
 The API is then at http://127.0.0.1:8080 (nginx, round robin over 3 api
-replicas). The replicas have no port of their own. Stop with
+replicas). Prometheus is at http://127.0.0.1:9090 and Grafana at
+http://127.0.0.1:3000 (user `admin`, password `GRAFANA_ADMIN_PASSWORD` from
+`.env`; the **seatsurge** dashboard is preloaded). The replicas have no port of their own. Stop with
 `docker compose down` (add `-v` to also delete the database volume).
 
 Checks (Docker must be running for the tests):

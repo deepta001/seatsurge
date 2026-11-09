@@ -21,6 +21,8 @@ from app.api.holds import router as holds_router
 from app.api.live import LiveUpdates
 from app.api.live import router as live_router
 from app.api.me import router as me_router
+from app.api.metrics import RequestMetricsMiddleware
+from app.api.metrics import router as metrics_router
 from app.api.orders import router as orders_router
 from app.core.settings import get_settings
 from app.db.session import create_db_engine, create_session_factory
@@ -81,6 +83,9 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
     expose_headers=["Retry-After", "X-Correlation-ID"],
 )
+# Times every request (S8.2). Added before the body limit, so it sits inside
+# it: refused oversized bodies are not timed, everything else is.
+app.add_middleware(RequestMetricsMiddleware)
 # Outermost layer: oversized bodies are refused before any route reads them.
 app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_body_bytes)
 app.include_router(health_router)
@@ -92,6 +97,8 @@ app.include_router(holds_router)
 app.include_router(orders_router)
 app.include_router(admin_router)
 app.include_router(live_router)
+# Internal only: nginx never routes /metrics to the outside (S8.1).
+app.include_router(metrics_router)
 
 
 # `async def` lets the server handle other requests while this one waits on

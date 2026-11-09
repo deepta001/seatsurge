@@ -116,3 +116,21 @@ async def redis(redis_url: str) -> AsyncIterator[Redis]:
     yield client
     await client.flushdb()
     await client.aclose()
+
+
+@pytest.fixture(autouse=True)
+def no_invariant_violations(request: pytest.FixtureRequest) -> Iterator[None]:
+    """invariant_violations_total must stay 0 in every test (CLAUDE.md section 6).
+
+    Only a test marked @pytest.mark.backstop, which trips a database
+    backstop on purpose, may raise it.
+    """
+    from prometheus_client import REGISTRY
+
+    def violations() -> float:
+        return REGISTRY.get_sample_value("invariant_violations_total") or 0.0
+
+    before = violations()
+    yield
+    if request.node.get_closest_marker("backstop") is None:
+        assert violations() == before, "a database backstop fired (invariant violation)"

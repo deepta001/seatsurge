@@ -1,0 +1,22 @@
+# Prometheus: reads ("scrapes") every process's /metrics page every 5 s and
+# stores the numbers over time (S8.2). Reachable at http://127.0.0.1:9090.
+
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  # The api replicas. Docker's DNS answers "api" with one address per
+  # replica, so each replica is scraped on its own (and a 4th would be found
+  # automatically). Graphs add them up with sum(...).
+  - job_name: api
+    dns_sd_configs:
+      - names: [api]
+        type: A
+        port: 8000
+        refresh_interval: 10s
+
+  # The worker serves its metrics on a separate port (no web server of its own).
+  - job_name: worker
+    static_configs:
+      - targets: ["worker:9100"]

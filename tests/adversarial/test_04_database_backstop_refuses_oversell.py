@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 from httpx import AsyncClient
+from prometheus_client import REGISTRY
 from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -144,6 +145,7 @@ async def test_mixed_size_orders_never_pass_capacity(
         assert sold + smallest_refused > CAPACITY
 
 
+@pytest.mark.backstop
 async def test_a_redis_counter_that_lies_cannot_cause_an_oversell(
     client: AsyncClient,
     sale: Sale,
@@ -165,7 +167,10 @@ async def test_a_redis_counter_that_lies_cannot_cause_an_oversell(
     assert held.status_code == 201
     assert (await confirm(client, held.json()["hold_id"], buyers[0])).status_code == 202
 
+    violations = REGISTRY.get_sample_value("invariant_violations_total") or 0.0
     assert await run_pipeline(sessions, redis) == 0  # the worker's backstop refused it
+    # ...and said so on the dashboard's must-be-zero metric (S8.2).
+    assert REGISTRY.get_sample_value("invariant_violations_total") == violations + 1
 
     [order] = await query(db_engine, "SELECT status FROM orders")
     assert order["status"] == "FAILED"

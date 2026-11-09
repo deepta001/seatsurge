@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_user, get_db_session, get_payments, get_redis
 from app.api.idempotent import run_idempotently
+from app.core.metrics import ORDERS_PLACED
 from app.core.tokens import AccessTokenClaims
 from app.db.order_models import OrderStatus
 from app.services.cancellations import cancel_order
@@ -70,6 +71,7 @@ async def confirm(
             payment_token=body.payment_token,
             idempotency_key=idempotency_key,
         )
+        ORDERS_PLACED.inc()
         return OrderAccepted(order_id=order.order_id, status=order.status)
 
     return await run_idempotently(

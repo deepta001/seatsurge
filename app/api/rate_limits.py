@@ -8,6 +8,7 @@ from redis.exceptions import RedisError
 
 from app.api.dependencies import get_current_user, get_redis
 from app.core.errors import RateLimited
+from app.core.metrics import HOLDS_REJECTED
 from app.core.settings import get_settings
 from app.core.tokens import AccessTokenClaims
 from app.redis.rate_limit import RateLimiter, hashed, rate_limit_key
@@ -27,6 +28,7 @@ async def limit_holds(
         window_seconds=settings.rate_limit_window_seconds,
     )
     if wait:
+        HOLDS_REJECTED.labels(RateLimited.code).inc()
         raise RateLimited(wait)
 
 

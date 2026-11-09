@@ -16,8 +16,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import get_current_user, get_db_session, get_redis
 from app.api.idempotent import run_idempotently
 from app.api.rate_limits import limit_holds
+from app.core.errors import DomainError
+from app.core.metrics import HOLDS_CREATED, HOLDS_REJECTED
 from app.core.tokens import AccessTokenClaims
-from app.services.holds import cancel_hold, create_hold, create_seat_hold
+from app.services.holds import Hold, cancel_hold, create_hold, create_seat_hold
 
 router = APIRouter(tags=["holds"])
 
@@ -77,20 +79,14 @@ async def create(
     """
 
     async def work() -> HoldResponse:
-        if body.seat_ids is not None:
-            hold = await create_seat_hold(
-                session, redis, user_id=user.user_id, event_id=event_id, seat_ids=body.seat_ids
-            )
-        else:
-            assert body.tier_id is not None and body.quantity is not None  # checked above
-            hold = await create_hold(
-                session,
-                redis,
-                user_id=user.user_id,
-                event_id=event_id,
-                tier_id=body.tier_id,
-                quantity=body.quantity,
-            )
+        try:
+            hold = await make_hold()
+        except DomainError as error:
+            # The error code is the reason: sold_out, seat_taken, hold_limit_exceeded...
+            HOLDS_REJECTED.labels(error.code).inc()
+            raise
+        # Counted only here, not for a replayed Idempotency-Key (that never calls work()).
+        HOLDS_CREATED.inc()
         return HoldResponse(
             hold_id=hold.hold_id,
             event_id=hold.event_id,
@@ -98,6 +94,21 @@ async def create(
             quantity=hold.quantity,
             expires_at=hold.expires_at,
             seat_ids=list(hold.seat_ids),
+        )
+
+    async def make_hold() -> Hold:
+        if body.seat_ids is not None:
+            return await create_seat_hold(
+                session, redis, user_id=user.user_id, event_id=event_id, seat_ids=body.seat_ids
+            )
+        assert body.tier_id is not None and body.quantity is not None  # checked above
+        return await create_hold(
+            session,
+            redis,
+            user_id=user.user_id,
+            event_id=event_id,
+            tier_id=body.tier_id,
+            quantity=body.quantity,
         )
 
     return await run_idempotently(

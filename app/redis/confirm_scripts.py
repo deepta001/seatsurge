@@ -18,6 +18,7 @@ from app.redis.keys import (
 )
 from app.redis.live import mark_changed
 from app.redis.scripts import LUA_DIR
+from app.redis.timed_script import register_timed_script
 
 CONSUME_HOLD_LUA = (LUA_DIR / "consume_hold.lua").read_text()
 REVERT_HOLD_LUA = (LUA_DIR / "revert_hold.lua").read_text()
@@ -47,7 +48,7 @@ class ConsumeHoldScript:
     """HELD -> CONFIRMING for the hold's owner, returning the hold's own details."""
 
     def __init__(self, redis: Redis) -> None:
-        self._script = redis.register_script(CONSUME_HOLD_LUA)
+        self._script = register_timed_script(redis, CONSUME_HOLD_LUA, "consume_hold")
 
     async def __call__(
         self, hold_id: str, *, user_id: int, now_ms: int, grace_ms: int
@@ -73,7 +74,7 @@ class RevertHoldScript:
     """CONFIRMING -> HELD, when confirming fails. Returns True if it reverted."""
 
     def __init__(self, redis: Redis) -> None:
-        self._script = redis.register_script(REVERT_HOLD_LUA)
+        self._script = register_timed_script(redis, REVERT_HOLD_LUA, "revert_hold")
 
     async def __call__(self, hold_id: str) -> bool:
         result = await self._script(
@@ -94,7 +95,7 @@ class FinishHoldScript:
 
     def __init__(self, redis: Redis) -> None:
         self._redis = redis
-        self._script = redis.register_script(FINISH_HOLD_LUA)
+        self._script = register_timed_script(redis, FINISH_HOLD_LUA, "finish_hold")
 
     async def __call__(
         self, hold_id: str, *, event_id: int, user_id: int, seat_ids: Sequence[int] = ()
@@ -130,7 +131,7 @@ class ReturnSeatsScript:
 
     def __init__(self, redis: Redis) -> None:
         self._redis = redis
-        self._script = redis.register_script(RETURN_SEATS_LUA)
+        self._script = register_timed_script(redis, RETURN_SEATS_LUA, "return_seats")
 
     async def __call__(
         self,

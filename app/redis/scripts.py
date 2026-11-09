@@ -22,6 +22,7 @@ from app.redis.keys import (
     user_hold_key,
 )
 from app.redis.live import mark_changed
+from app.redis.timed_script import register_timed_script
 
 LUA_DIR = Path(__file__).parent / "lua"
 # Read once at import, not on every request.
@@ -55,7 +56,7 @@ class ReserveTierScript:
         # register_script sends the script once and then calls it by its SHA
         # fingerprint (EVALSHA), re-sending it only if Redis has forgotten it.
         self._redis = redis
-        self._script = redis.register_script(RESERVE_TIER_LUA)
+        self._script = register_timed_script(redis, RESERVE_TIER_LUA, "reserve_tier")
 
     async def __call__(self, request: HoldRequest) -> ReserveOutcome:
         if request.qty < 1:
@@ -111,7 +112,7 @@ class ReleaseHoldScript:
 
     def __init__(self, redis: Redis) -> None:
         self._redis = redis
-        self._script = redis.register_script(RELEASE_HOLD_LUA)
+        self._script = register_timed_script(redis, RELEASE_HOLD_LUA, "release_hold")
 
     async def __call__(
         self,

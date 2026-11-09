@@ -9,6 +9,7 @@ or roll back together.
 
 import logging
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -19,7 +20,10 @@ from app.worker.messages import Handler, StreamMessage
 logger = logging.getLogger(__name__)
 
 # A handler that does its work with the session it's given (and never commits itself).
-DbHandler = Callable[[AsyncSession, StreamMessage], Awaitable[None]]
+# It may return a result, which `on_first_commit` receives.
+DbHandler = Callable[[AsyncSession, StreamMessage], Awaitable[Any]]
+# Runs after the work committed, the first time only (never for a duplicate).
+OnFirstCommit = Callable[[Any], None]
 
 
 async def claim_message(session: AsyncSession, message_id: int) -> bool:
@@ -45,6 +49,7 @@ def run_once(
     handler: DbHandler,
     *,
     after_commit: Handler | None = None,
+    on_first_commit: OnFirstCommit | None = None,
 ) -> Handler:
     """Wrap a database handler so each outbox message is acted on exactly once.
 
@@ -57,14 +62,19 @@ def run_once(
     processing AND for duplicates: if the worker crashed between the commit
     and this step, the redelivered duplicate finishes the job. So it must be
     idempotent itself.
+
+    `on_first_commit` gets the handler's result once the commit succeeded,
+    and only the first time: right for counting things (S8.2 metrics), since
+    a rolled-back attempt or a duplicate is never counted.
     """
 
     async def handle(message: StreamMessage) -> None:
         async with session_factory() as session, session.begin():
             first_time = await claim_message(session, message.outbox_id)
-            if first_time:
-                await handler(session, message)
+            result = await handler(session, message) if first_time else None
         # Leaving `begin()` committed the claim and the work together.
+        if first_time and on_first_commit is not None:
+            on_first_commit(result)
         if not first_time:
             logger.info(
                 "consumer: outbox message %s already processed; skipping duplicate %s",

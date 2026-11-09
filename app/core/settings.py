@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     db_pool_size: int = Field(default=5, ge=1, le=50)
     db_max_overflow: int = Field(default=10, ge=0, le=50)
 
+    # The worker serves its Prometheus metrics on this port (internal network only).
+    worker_metrics_port: int = Field(default=9100, ge=1024, le=65535)
+
     # Per process. Three API replicas use 3x this many Redis connections.
     redis_max_connections: int = Field(default=50, gt=0, le=1000)
     # How long a request waits for a free Redis connection before failing.

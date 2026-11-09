@@ -897,3 +897,42 @@ A standard-library probe showed 1,000 new connections through Docker and
 nginx are answered in ~1.5 s; the time was the httpx client's connection
 pool, not the server. No throughput numbers are claimed until the Locust
 load test (S8.3).
+
+### Metrics and the dashboard (S8.2)
+- **Prometheus pulls, each process exposes its own numbers:** every api
+  replica serves `/metrics`; the worker (no web server) serves port 9100 from
+  prometheus_client's small thread. Prometheus finds the replicas through
+  Docker's DNS (one address per replica), so a 4th replica is scraped
+  automatically. Graphs `sum(...)` across instances.
+- **Labels from small fixed sets only:** the route TEMPLATE
+  (`/events/{event_id}/holds`), the error code, the script name. Never an
+  event, user or hold id: each label value is a separate time series, and ids
+  would grow them without limit.
+- **Count each thing once, at the moment it became true:**
+  - holds: inside the idempotent `work()`, so a replayed Idempotency-Key is
+    not a second hold; rejections by their error code;
+  - orders confirmed: `run_once` calls `on_first_commit` with the handler's
+    result only after the transaction committed, and never for a duplicate
+    (two guards: the hook isn't called, and a duplicate has no result);
+  - orders failed: only when this run moved the order PENDING -> FAILED;
+  - invariant violations: where the consumer classifies an
+    `InvariantViolation` (once per message, as it is dead-lettered at once).
+- **Backlog gauges are refreshed, not computed on scrape:** a worker task
+  reads the outbox (one statement, database clock) and the stream (XPENDING,
+  XLEN) every 5 s. A scrape never waits on Postgres.
+- **"Must be 0" is enforced in tests:** an autouse fixture fails any test
+  that raises `invariant_violations_total` unless it is marked
+  `@pytest.mark.backstop` (the two tests that trip a backstop on purpose
+  also assert it rose by exactly 1).
+- **Script latency is what the app experiences:** the timer wraps the whole
+  call, including waiting for a free Redis connection and event-loop
+  scheduling. In a 1,000-buyer burst it showed a p99 of ~0.9 s for
+  `rate_limit`, while Redis's own `INFO commandstats` showed ~40 us per
+  script call: the wait is the connection pool (50 per replica, ~333
+  concurrent requests each), not Redis. Both views are useful; this one is
+  the one users feel. Tuning comes with the load test (S8.3).
+- **Grafana is provisioned from the repo** (`deploy/grafana/`): data source
+  and dashboard JSON load at startup and can't be edited in the UI, so the
+  dashboard is reviewed like code.
+- **Not yet:** structured JSON logs with a correlation id carried
+  API -> outbox row -> worker (S8.2b).

@@ -7,6 +7,7 @@ import uuid
 from redis.asyncio import Redis
 
 from app.redis.scripts import LUA_DIR
+from app.redis.timed_script import register_timed_script
 
 RATE_LIMIT_LUA = (LUA_DIR / "rate_limit.lua").read_text()
 
@@ -22,7 +23,7 @@ def hashed(value: str) -> str:
 
 class RateLimiter:
     def __init__(self, redis: Redis) -> None:
-        self._script = redis.register_script(RATE_LIMIT_LUA)
+        self._script = register_timed_script(redis, RATE_LIMIT_LUA, "rate_limit")
 
     async def retry_after_seconds(self, key: str, *, limit: int, window_seconds: float) -> int:
         """Count this request. 0 if allowed; otherwise how many seconds to wait (at least 1)."""

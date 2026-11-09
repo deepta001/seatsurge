@@ -15,7 +15,8 @@ from typing import Any
 from redis.asyncio import Redis
 from redis.exceptions import ResponseError
 
-from app.core.job_errors import PermanentError
+from app.core.job_errors import InvariantViolation, PermanentError
+from app.core.metrics import INVARIANT_VIOLATIONS
 from app.redis.keys import ORDERS_STREAM_KEY
 from app.worker.dead_letters import Compensation, dead_letter
 from app.worker.messages import Handler, parse_message
@@ -92,6 +93,9 @@ async def handle_entry(
             raise PermanentError(f"no handler for message type {message.type!r}")
         await handler(message)
     except PermanentError as error:
+        if isinstance(error, InvariantViolation):
+            # A database backstop refused what Redis let through. Must stay 0.
+            INVARIANT_VIOLATIONS.inc()
         try:
             await dead_letter(
                 redis,

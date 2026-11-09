@@ -23,6 +23,7 @@ EXPECTED_ROUTES = {
     ("GET", "/"),
     ("GET", "/health/live"),
     ("GET", "/health/ready"),
+    ("GET", "/metrics"),  # S8.2; internal only, nginx answers it with 404
     ("POST", "/auth/register"),
     ("POST", "/auth/login"),
     ("POST", "/auth/refresh"),

@@ -602,3 +602,14 @@ Plain-English meanings of every technical term, with where it first appears.
 | Stateless service | Keeps nothing between requests in its own memory, so any replica can serve any request. | the api replicas |
 | Non-root container | A container whose process runs as a normal user, not the all-powerful root. | `USER appuser` |
 | Connection pool | A set of open database connections that requests borrow and return. | `db_pool_size`, `db_max_overflow` |
+| Metric | A number about the system, recorded over time (e.g. holds created). | `app/core/metrics.py` |
+| Counter | A metric that only goes up; rates are worked out from it. | `holds_created_total` |
+| Gauge | A metric that goes up and down (a current amount). | `outbox_pending` |
+| Histogram | Counts observations into buckets, so percentiles can be estimated. | `http_request_duration_seconds` |
+| Label | A named dimension of a metric (route, reason); each value is a separate series. | `holds_rejected_total{reason=...}` |
+| Cardinality | How many different label values (series) a metric has; ids would make it explode. | route templates, not ids |
+| Scrape | Prometheus fetching a process's `/metrics` page. | `deploy/prometheus.yml` |
+| Prometheus | Stores metrics over time and answers queries (PromQL). | `prometheus` service |
+| Grafana | Draws dashboards from Prometheus queries. | `deploy/grafana/` |
+| Provisioning | Loading configuration (data sources, dashboards) from files at startup. | `deploy/grafana/provisioning` |
+| Percentile (p50/p95/p99) | The value that 50/95/99 % of observations are at or below. | the latency panel |

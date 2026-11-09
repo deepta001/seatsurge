@@ -1,0 +1,11 @@
+# Grafana loads every dashboard JSON in this folder at startup (S8.2), so the
+# dashboard lives in the repo, not only inside Grafana's database.
+apiVersion: 1
+providers:
+  - name: seatsurge
+    folder: seatsurge
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards

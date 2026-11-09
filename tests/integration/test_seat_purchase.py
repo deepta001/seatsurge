@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 from httpx import AsyncClient
+from prometheus_client import REGISTRY
 from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -201,6 +202,7 @@ async def test_finishing_never_creates_a_half_built_sold_set(
     assert first["order_id"]
 
 
+@pytest.mark.backstop
 async def test_a_seat_with_a_live_ticket_stays_sold_when_a_clashing_order_fails(
     client: AsyncClient,
     venue: Venue,
@@ -252,9 +254,11 @@ async def test_a_seat_with_a_live_ticket_stays_sold_when_a_clashing_order_fails(
             {"a": str(clash_id), "p": json.dumps(payload)},
         )
 
+    violations = REGISTRY.get_sample_value("invariant_violations_total") or 0.0
     await run_pipeline(sessions, redis)
 
     # Postgres refused the second ticket; the order FAILED; the seat stays SOLD.
+    assert REGISTRY.get_sample_value("invariant_violations_total") == violations + 1
     issued = await query(db_engine, "SELECT order_id FROM tickets WHERE status = 'ISSUED'")
     assert len(issued) == 1
     [clash] = await query(db_engine, "SELECT status FROM orders WHERE id = :o", o=clash_id)

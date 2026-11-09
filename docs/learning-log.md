@@ -53,6 +53,7 @@ checked. The teach-back for all of them happens at the end.
 - S7.2 Security hardening checklist: built, not checked.
 - S7.3 Live updates with pub/sub and SSE: built, not checked.
 - S8.1 Three API replicas behind nginx: built, not checked.
+- S8.2 Metrics and the Grafana dashboard: built, not checked.
 
 ## Shaky topics
 
@@ -2241,5 +2242,72 @@ machine, so it will be checked in CI.
 **Key concepts:** container images and layers, stateless replicas, load
 balancing and round robin, reverse proxies and trusted forwarded headers,
 connection budgets, least privilege (non-root).
+
+**Understanding check:** deferred to the end of the project.
+
+## S8.2: Metrics and the Grafana dashboard (2026-11-09)
+
+**Built:**
+- `app/core/metrics.py`: every metric in one place (section 10's list):
+  request latency by route template, holds created / rejected by reason,
+  orders placed / confirmed / failed, dead letters, hold expiries,
+  `invariant_violations_total`, outbox and stream backlog gauges, Redis
+  script latency. New dependency: `prometheus-client` (from the section 2
+  stack).
+- `app/api/metrics.py`: a small ASGI middleware that times each request by
+  route template (live streams and `/metrics` itself excluded), and the
+  `/metrics` page.
+- `app/redis/timed_script.py`: every Lua wrapper registers its script
+  through `register_timed_script`, so all 8 scripts are timed alike.
+- Worker: `run_once(..., on_first_commit=...)` counts confirmed orders only
+  after the commit and never for duplicates; failed orders, dead letters,
+  expiries and invariant violations counted where they happen;
+  `app/worker/backlog.py` refreshes the backlog gauges every 5 s; metrics on
+  port 9100.
+- Compose: `prometheus` (scrapes the replicas via Docker DNS, and the
+  worker) and `grafana` (data source and dashboard provisioned from
+  `deploy/grafana/`, 11 panels, admin password from `.env`, no anonymous
+  access), both on 127.0.0.1 only.
+- Tests: an autouse guard fails ANY test that raises
+  `invariant_violations_total`, unless it is marked `@pytest.mark.backstop`.
+
+**Tests:** `tests/integration/test_metrics.py` (7), the guard, and the two
+backstop tests now assert the counter rose by exactly 1.
+
+**Ran it:**
+- 324/324 tests passed; ruff, format and mypy are clean. The guard found
+  exactly the two tests that trip a backstop on purpose; nothing else.
+- Mutation check:
+  - caught: labelling by raw path instead of route template; counting a
+    replayed Idempotency-Key as a new hold; never counting invariant
+    violations;
+  - "count duplicates as confirmed" (removing the `first_time` check) was
+    NOT caught, and that was correct: a duplicate has no handler result, so
+    `count_confirmed(None)` counts nothing. Removing both guards was caught.
+- Live, through nginx, 1,000 buyers on 100 seats (twice):
+  - 100 x 201, 900 x 409, 0 oversold each time;
+  - Prometheus: 4 targets up (3 replicas found via DNS, worker);
+    `holds_created` 200 (65 / 73 / 62 per replica), `sold_out` 1,800,
+    invariant violations 0;
+  - Grafana: 401 without login or with a wrong password; the dashboard and
+    its 11 panels loaded; data source healthy. `/metrics` via nginx: 404.
+
+**Debugging moments:**
+1. A latency query said `nan`: more than 5 minutes had passed since the
+   sale, so a 5-minute rate was 0. The counts were right.
+2. **What does the script timer measure?** p99 ~0.9 s for `rate_limit` in
+   the burst, while Redis's own stats said ~40 us per call. The app-side
+   timer includes waiting for one of 50 pooled connections (~333 concurrent
+   requests per replica). The likely bottleneck for S8.3 to measure and tune.
+3. `Gauge._value` is private; tests read every metric through
+   `REGISTRY.get_sample_value`, like Prometheus would.
+
+**Split off:** structured JSON logs and a correlation id carried
+API -> outbox row -> worker (section 10) become S8.2b, to keep this step
+reviewable.
+
+**Key concepts:** counters vs gauges vs histograms, labels and cardinality,
+pull-based scraping, percentiles from buckets, counting once after commit,
+measuring where the user waits.
 
 **Understanding check:** deferred to the end of the project.

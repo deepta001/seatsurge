@@ -18,6 +18,7 @@ from app.db.order_models import Order, OrderStatus, Ticket, TicketStatus
 from app.redis.keys import HOLDS_EXPIRY_KEY, hold_key, seat_key, sold_seats_key, user_hold_key
 from app.redis.live import mark_changed
 from app.redis.scripts import LUA_DIR
+from app.redis.timed_script import register_timed_script
 
 RESERVE_SEATS_LUA = (LUA_DIR / "reserve_seats.lua").read_text()
 # Not a seat id (those are positive numbers), so it can never block a real seat.
@@ -56,7 +57,7 @@ class ReserveSeatsScript:
 
     def __init__(self, redis: Redis) -> None:
         self._redis = redis
-        self._script = redis.register_script(RESERVE_SEATS_LUA)
+        self._script = register_timed_script(redis, RESERVE_SEATS_LUA, "reserve_seats")
 
     async def __call__(self, request: SeatHoldRequest) -> SeatReserveResult:
         if not request.seat_ids or len(set(request.seat_ids)) != len(request.seat_ids):

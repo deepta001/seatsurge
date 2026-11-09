@@ -18,11 +18,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.job_errors import PermanentError
+from app.core.metrics import ORDERS_CONFIRMED, ORDERS_FAILED
 from app.db.order_models import Order, OrderStatus
 from app.redis.confirm_scripts import FinishHoldScript, FinishOutcome, ReturnSeatsScript
 from app.redis.scripts import HoldStatus, ReleaseHoldScript, ReleaseOutcome
 from app.redis.seat_scripts import sold_seat_ids, unmark_sold
-from app.services.tickets import issue_tickets
+from app.services.tickets import IssuedTickets, issue_tickets
 from app.worker.dead_letters import Compensation
 from app.worker.idempotency import run_once
 from app.worker.messages import Handler, StreamMessage
@@ -53,12 +54,21 @@ def payload_order_id(message: StreamMessage) -> uuid.UUID:
         raise PermanentError(f"message {message.entry_id} has no valid order_id") from error
 
 
-async def issue_order_tickets(session: AsyncSession, message: StreamMessage) -> None:
+async def issue_order_tickets(
+    session: AsyncSession, message: StreamMessage
+) -> IssuedTickets | None:
     issued = await issue_tickets(session, payload_order_id(message))
     if issued is None:
         logger.info("worker: order %s is no longer PENDING; nothing to issue", message.aggregate_id)
-        return
+        return None
     logger.info("worker: order %s issued tickets %s", issued.order_id, issued.ticket_numbers)
+    return issued
+
+
+def count_confirmed(issued: IssuedTickets | None) -> None:
+    """Runs after the commit, once per message: an order confirmed exactly then."""
+    if issued is not None:
+        ORDERS_CONFIRMED.inc()
 
 
 def finish_hold_after_commit(redis: Redis) -> Handler:
@@ -129,7 +139,8 @@ def fail_order_and_release_hold(
             )
             if order is None:
                 return
-            if order.status == OrderStatus.PENDING:
+            newly_failed = order.status == OrderStatus.PENDING
+            if newly_failed:
                 order.status = OrderStatus.FAILED
             failed = order.status == OrderStatus.FAILED
             hold_id, user_id, event_id = order.hold_id, order.user_id, order.event_id
@@ -137,6 +148,8 @@ def fail_order_and_release_hold(
             # PENDING order. A seat that DOES have a live ticket (from another
             # order: the double-sell backstop refused this one) stays sold.
             seats_to_free = set(order.seat_ids or []) - await sold_seat_ids(session, event_id)
+        if newly_failed:  # committed just now; a re-run of this undo isn't counted again
+            ORDERS_FAILED.inc()
         if not failed:
             logger.error(
                 "worker: dead message for order %s, which is %s; seats kept", order_id, order.status
@@ -172,7 +185,10 @@ def build_handlers(
     """The consumer's handler table: message type -> handler."""
     return {
         "order.placed": run_once(
-            session_factory, issue_order_tickets, after_commit=finish_hold_after_commit(redis)
+            session_factory,
+            issue_order_tickets,
+            after_commit=finish_hold_after_commit(redis),
+            on_first_commit=count_confirmed,
         ),
         "order.cancelled": run_once(
             session_factory, check_order_cancelled, after_commit=return_seats_after_commit(redis)

@@ -13,6 +13,7 @@ import time
 from redis.asyncio import Redis
 from redis.exceptions import ResponseError
 
+from app.core.metrics import HOLD_EXPIRIES
 from app.redis.keys import HOLDS_EXPIRY_KEY
 from app.redis.scripts import HoldStatus, ReleaseHoldScript, ReleaseOutcome
 
@@ -42,6 +43,7 @@ async def sweep_expired_holds(redis: Redis, *, now: int, batch_size: int = 100) 
             continue
         if outcome == ReleaseOutcome.RELEASED:
             released += 1
+            HOLD_EXPIRIES.inc()
         elif outcome == ReleaseOutcome.KEY_MISMATCH:
             # Should never happen; log it loudly and carry on with the rest.
             logger.error("sweeper: hold %s record does not match its keys", hold_id)

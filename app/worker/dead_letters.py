@@ -14,6 +14,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from redis.asyncio import Redis
 
 from app.core.job_errors import PermanentError
+from app.core.metrics import DEAD_LETTERS
 from app.redis.keys import DEAD_LETTER_STREAM_KEY
 from app.worker.messages import StreamMessage, parse_message
 
@@ -55,7 +56,8 @@ async def dead_letter(
     }
     await redis.xadd(DEAD_LETTER_STREAM_KEY, record)  # type: ignore[arg-type]
     await redis.xack(stream, group, entry_id)
-    # The alert: an ERROR log now; a dead-letter metric joins it in S8.2.
+    # The alert: this counter (graphed and alerted on in Grafana) and an ERROR log.
+    DEAD_LETTERS.labels(message.type if message is not None else "unreadable").inc()
     logger.error(
         "consumer: message %s dead-lettered after %d delivery(ies): %s",
         entry_id,
