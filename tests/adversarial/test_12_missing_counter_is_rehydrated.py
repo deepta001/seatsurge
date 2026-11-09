@@ -13,8 +13,15 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.redis import rehydrate
-from app.redis.keys import inventory_key, rehydrate_lock_key
-from tests.sales import Sale, bearer, hold
+from app.redis.keys import (
+    HOLDS_CONFIRMING_KEY,
+    HOLDS_EXPIRY_KEY,
+    hold_key,
+    inventory_key,
+    rehydrate_lock_key,
+)
+from app.services.payments import MockPaymentProvider
+from tests.sales import Sale, bearer, confirm, hold
 
 
 def counter(sale: Sale) -> str:
@@ -115,3 +122,45 @@ async def test_if_the_rebuild_never_finishes_the_answer_is_503_not_zero(
     assert response.status_code == 503
     assert response.json()["error"] == "inventory_not_ready"
     assert await redis.exists(counter(sale)) == 0  # still not invented
+
+
+async def test_pending_orders_are_counted_once_whether_or_not_their_hold_survived(
+    client: AsyncClient,
+    redis: Redis,
+    db_engine: AsyncEngine,
+    sale: Sale,
+    buyers: list[int],
+    payments: MockPaymentProvider,
+) -> None:
+    # A confirmed hold: CONFIRMING in Redis AND a PENDING order in Postgres.
+    confirmed = (await hold(client, sale, user_id=buyers[0], quantity=4)).json()["hold_id"]
+    assert (await confirm(client, confirmed, buyers[0])).status_code == 202
+    # A second PENDING order whose hold record was lost from Redis.
+    lost = (await hold(client, sale, user_id=buyers[1], quantity=3)).json()["hold_id"]
+    assert (await confirm(client, lost, buyers[1])).status_code == 202
+    await redis.delete(hold_key(lost))
+    await redis.zrem(HOLDS_CONFIRMING_KEY, lost)
+    await redis.delete(counter(sale))
+
+    response = await hold(client, sale, user_id=buyers[2], quantity=1)
+
+    assert response.status_code == 201
+    # 50 - 4 (counted once: its hold, not again as an order)
+    #    - 3 (its hold is gone, so counted via the PENDING order) - 1 just held = 42
+    assert await redis.get(counter(sale)) == "42"
+
+
+async def test_one_malformed_hold_entry_does_not_block_the_rebuild(
+    client: AsyncClient, redis: Redis, sale: Sale
+) -> None:
+    # A corrupt entry: listed as a hold, but stored as a plain string, not a hash.
+    await redis.set(hold_key("corrupt"), "not-a-hash")
+    await redis.zadd(HOLDS_EXPIRY_KEY, {"corrupt": 1})
+    await hold(client, sale, user_id=1, quantity=4)
+    await redis.delete(counter(sale))
+
+    response = await hold(client, sale, user_id=2, quantity=1)
+
+    # Before the fix: WRONGTYPE -> 500 for the rebuilder and 503s for everyone else.
+    assert response.status_code == 201
+    assert await redis.get(counter(sale)) == "45"  # 50 - 4 held - 1 just held

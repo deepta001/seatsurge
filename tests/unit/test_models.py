@@ -37,6 +37,7 @@ def test_all_tables_are_registered() -> None:
         "refresh_tokens",
         "orders",
         "tickets",
+        "outbox_events",
     }
 
 

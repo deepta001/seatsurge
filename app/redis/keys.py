@@ -6,6 +6,9 @@ disagree about where something lives.
 
 # All hold expiry times, in one sorted set: score = expires_at in milliseconds.
 HOLDS_EXPIRY_KEY = "holds:expiry"
+# Holds being confirmed: score = expires_at + grace (ms). Kept apart so the
+# expiry sweeper never releases a hold that is in the middle of being bought.
+HOLDS_CONFIRMING_KEY = "holds:confirming"
 
 
 def inventory_key(event_id: int, tier_id: int) -> str:

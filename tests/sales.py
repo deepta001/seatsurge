@@ -13,14 +13,15 @@ from httpx import AsyncClient, Response
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from app.api.dependencies import get_redis
+from app.api.dependencies import get_payments, get_redis
 from app.core.tokens import create_access_token
 from app.db.models import EventStatus, SeatingType, UserRole
 from app.db.session import create_session_factory
 from app.main import app
 from app.redis.keys import inventory_key
-from app.services.auth import create_admin
+from app.services.auth import create_admin, register_user
 from app.services.events import EventChanges, TierSpec, create_event, update_event
+from app.services.payments import MockPaymentProvider
 
 
 @dataclass
@@ -92,5 +93,45 @@ async def hold(
     return await client.post(
         f"/events/{sale.event_id}/holds",
         json={"tier_id": tier_id or sale.tier_id, "quantity": quantity},
+        headers={**bearer(user_id), "Idempotency-Key": key or new_key()},
+    )
+
+
+@pytest.fixture
+async def buyers(db_engine: AsyncEngine) -> list[int]:
+    """Three real USER accounts (orders need real users, unlike holds)."""
+    ids: list[int] = []
+    async with create_session_factory(db_engine)() as session:
+        for n in range(1, 4):
+            user = await register_user(
+                session,
+                email=f"buyer{n}@example.com",
+                username=f"buyer{n}",
+                password="a long password!",
+            )
+            ids.append(user.id)
+    return ids
+
+
+@pytest.fixture
+def payments() -> MockPaymentProvider:
+    """A mock provider the test can inspect (charges, refunds), plugged into the app."""
+    provider = MockPaymentProvider()
+    app.dependency_overrides[get_payments] = lambda: provider
+    return provider
+
+
+async def confirm(
+    client: AsyncClient,
+    hold_id: str,
+    user_id: int,
+    token: str = "tok_ok",
+    key: str | None = None,
+    extra: dict[str, object] | None = None,
+) -> Response:
+    """POST /holds/{id}/confirm as `user_id`. A fresh Idempotency-Key unless `key` is given."""
+    return await client.post(
+        f"/holds/{hold_id}/confirm",
+        json={"payment_token": token, **(extra or {})},
         headers={**bearer(user_id), "Idempotency-Key": key or new_key()},
     )

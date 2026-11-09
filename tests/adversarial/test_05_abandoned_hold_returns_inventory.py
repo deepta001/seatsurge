@@ -77,3 +77,18 @@ async def test_a_user_cancel_racing_the_sweeper_returns_seats_once(
     assert cancel.status_code == 204
     assert swept in (0, 1)
     assert await redis.get(inventory_key(sale.event_id, sale.tier_id)) == "50"
+
+
+async def test_a_malformed_entry_never_blocks_the_sweeper(
+    client: AsyncClient, redis: Redis, sale: Sale
+) -> None:
+    # A corrupt entry that sorts FIRST (score 1), ahead of a real expired hold.
+    await redis.set(hold_key("corrupt"), "not-a-hash")
+    await redis.zadd(HOLDS_EXPIRY_KEY, {"corrupt": 1})
+    h = (await hold(client, sale, quantity=5)).json()
+
+    released = await sweep_expired_holds(redis, now=ms(h["expires_at"]))
+
+    assert released == 1  # the real hold was still released
+    assert await redis.get(inventory_key(sale.event_id, sale.tier_id)) == "50"
+    assert await redis.zscore(HOLDS_EXPIRY_KEY, "corrupt") is None  # dropped from the index

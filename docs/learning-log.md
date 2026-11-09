@@ -34,6 +34,7 @@ checked. The teach-back for all of them happens at the end.
 - S2.9 Concurrency test 1 and 3-process demo: built, not checked.
 - S3.1 Transactions primer; orders and tickets tables: built, not checked.
 - S3.2 Mock payment provider: built, not checked.
+- S3.3 consume_hold.lua and POST /holds/{id}/confirm (tests 2, 3): built, not checked.
 
 ## Shaky topics
 
@@ -1127,5 +1128,69 @@ OpenAPI schema, the public list of routes.
 **Key concepts:** payment tokens vs card numbers, charge then refund,
 idempotent external calls, 402 Payment Required, seeded randomness, test
 doubles (mocks).
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S3.3: consume_hold.lua and POST /holds/{id}/confirm; tests 2 and 3 (2026-11-09)
+
+**What was built:**
+- `app/db/outbox_models.py`: an `outbox_events` table (migration
+  `9851ce2da7c7`) with a partial index on `next_retry_at` for PENDING rows.
+- `consume_hold.lua` (HELD -> CONFIRMING; owner/expiry checks; moves the
+  hold to `holds:confirming`; returns event, tier and qty) and
+  `revert_hold.lua` (CONFIRMING -> HELD). Wrappers are in
+  `app/redis/confirm_scripts.py`.
+- `app/services/orders.py`: `confirm_hold` (consume, price + cap pre-check,
+  charge, then one transaction for the order + outbox with a user-row lock;
+  revert and refund on any failure).
+- New errors HoldExpired 410, ConfirmInProgress 409 and
+  PurchaseLimitExceeded 409. New settings `purchase_user_cap` and
+  `confirm_grace_seconds`.
+- `app/api/idempotent.py`: `run_idempotently`, shared by holds and confirm
+  (the hold route was refactored onto it).
+- `app/api/orders.py`: `POST /holds/{hold_id}/confirm` returns 202
+  `{order_id, status}`.
+- Rehydrate counts holds in both indexes, plus PENDING orders whose hold is
+  gone.
+- Robustness: rehydrate and the sweeper skip malformed hold entries.
+- Tests:
+  - `tests/integration/test_confirm_api.py` (14).
+  - Adversarial test 2 (2) and test 3 (6).
+  - Test 12 +2, test 5 +1.
+  - `tests/sales.py` gained `buyers`, `payments` and `confirm()`.
+- The S2.9 demo cleanup now deletes only its own keys.
+
+**Ran it:**
+- 192/192 tests passed; ruff, mypy and `alembic check` are clean; the
+  confirm race and retry tests passed 3 runs in a row.
+- Live against the dev stack:
+  - `tok_declined`: 402, and the hold was given back.
+  - `quantity=100`: 422.
+  - `tok_ok`: 202 PENDING.
+  - Retry: the same order, replayed.
+  - Postgres showed the order (2 seats, 9000 cents) and its `order.placed`
+    outbox row PENDING.
+
+**Debugging moments:**
+1. A helper script failed to write `holds.py` (Errno 22), so the new import
+   was never added. ruff then removed the old imports, which made 13 tests
+   fail. The fix was adding the import directly, then re-checking.
+2. **The safety classifier blocked a demo** whose cleanup would have
+   TRUNCATEd whole tables and deleted every `hold:*` key on the dev stack.
+   It was rewritten to delete only its own rows and keys. The committed S2.9
+   demo had the same flaw and was fixed (a planted unrelated key survived
+   the run).
+3. That check exposed a real fragility: one malformed hold entry made every
+   rebuild fail (500/503s) and would have stalled the sweeper. Both now skip
+   it, with regression tests.
+4. A shell heredoc for these docs failed to parse and wrote nothing. The docs
+   were re-applied from files.
+
+**Key concepts:** state machines across systems (Redis hold status plus DB
+order status), compensating actions (revert, refund), one transaction for
+data plus its outbox, row locks scoped per user, not trusting the client,
+409 vs 410 vs 402.
 
 **Understanding check:** deferred to the end of the project.

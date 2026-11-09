@@ -151,3 +151,23 @@ class PaymentUnavailable(DomainError):
     code = "payment_unavailable"
     message = "Payments are temporarily unavailable. Please try again shortly."
     headers = {"Retry-After": "2"}
+
+
+class HoldExpired(DomainError):
+    # 410 Gone: it existed, but it's no longer available.
+    status_code = 410
+    code = "hold_expired"
+    message = "This hold has expired or was released."
+
+
+class ConfirmInProgress(DomainError):
+    status_code = 409
+    code = "confirm_in_progress"
+    message = "This hold is already being confirmed."
+    headers = {"Retry-After": "1"}
+
+
+class PurchaseLimitExceeded(DomainError):
+    status_code = 409
+    code = "purchase_limit_exceeded"
+    message = "You've reached the most tickets allowed for this event."

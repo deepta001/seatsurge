@@ -40,7 +40,7 @@ from app.main import app  # noqa: E402
 from app.redis.client import build_redis_client  # noqa: E402
 
 # Every table the migrations create, emptied after each test that used the database.
-ALL_TABLES = ["users", "events", "tiers", "refresh_tokens", "orders", "tickets"]
+ALL_TABLES = ["users", "events", "tiers", "refresh_tokens", "orders", "tickets", "outbox_events"]
 
 
 @pytest.fixture(scope="session")

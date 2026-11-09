@@ -40,6 +40,13 @@ class Settings(BaseSettings):
     # The most seats one user may hold at once for one event.
     hold_user_cap: int = Field(default=10, ge=1, le=100)
 
+    # The most tickets one user may BUY per event, across all their orders
+    # (CLAUDE.md section 7.2). Enforced in Postgres at confirm time.
+    purchase_user_cap: int = Field(default=10, ge=1, le=100)
+    # How long a confirm may run past the hold's expiry before the sweeper
+    # checks whether it ever produced an order.
+    confirm_grace_seconds: int = Field(default=120, ge=10, le=3600)
+
     # Mock payments only (there are no real payments in this project): the
     # chance that a valid "tok_ok" charge is randomly declined, for testing
     # failure paths. 0.0 = never, 1.0 = always.

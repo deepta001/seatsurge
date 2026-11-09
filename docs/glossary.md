@@ -422,3 +422,18 @@ Plain-English meanings of every technical term, with where it first appears.
 | 402 Payment Required | The HTTP status for "the payment didn't go through". | `PaymentDeclined` |
 | Mock / test double | A stand-in for a real dependency that behaves predictably in tests. | The whole `payments.py` |
 | Failure injection | Deliberately making a dependency fail some of the time, to test the failure paths. | `PAYMENT_FAILURE_RATE` |
+
+## Confirming (S3.3)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| Confirm | Turning a hold into a PENDING order: check the hold, charge, then write the order + outbox. | `POST /holds/{id}/confirm` |
+| CONFIRMING | The hold status while it's being bought; the expiry sweeper leaves it alone. | `consume_hold.lua`, `holds:confirming` |
+| Outbox | A table of "work to do after this commit", written in the same transaction as the data. | `outbox_events` |
+| Outbox pattern | Write data + outbox row atomically; a relay publishes the row later, so follow-up work is never lost. | S3.3 (write), S4.1 (relay) |
+| 202 Accepted | "Got it, still working on it" (tickets aren't issued yet). | Confirm response |
+| 410 Gone | "It existed but is no longer available." | `HoldExpired` |
+| Compensating action | Undoing an earlier step when a later one fails (revert the hold, refund the payment). | `confirm_hold()` |
+| Row lock (`SELECT ... FOR UPDATE`) | Makes concurrent transactions touching the same row take turns. | Locking the user's row at confirm |
+| JSONB | Postgres's binary JSON column type: flexible structured data, queryable. | `outbox_events.payload` |
+| `WRONGTYPE` | Redis's error for using a command on the wrong data type (e.g. HMGET on a string). | The S3.3 robustness fix |

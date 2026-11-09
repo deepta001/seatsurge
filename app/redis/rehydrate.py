@@ -4,8 +4,8 @@ A missing `inv:{event}:{tier}:avail` key means "not set up" (Redis restarted,
 was flushed, or the tier is new), never "zero seats". This module recomputes
 it as:
 
-    available = capacity - sold (Postgres) - seats in active holds (Redis)
-                - seats in PENDING orders (Postgres; Phase C, 0 for now)
+    available = capacity - sold (Postgres) - seats in live holds (Redis)
+                - seats in PENDING orders whose hold is gone from Redis (Postgres)
 
 Only ONE process rebuilds a given counter at a time (a Redis lock), and the
 result is written with SET NX, so it can never overwrite a live counter.
@@ -15,11 +15,19 @@ import asyncio
 import logging
 
 from redis.asyncio import Redis
-from redis.exceptions import LockError
+from redis.exceptions import LockError, ResponseError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Tier
-from app.redis.keys import HOLDS_EXPIRY_KEY, hold_key, inventory_key, rehydrate_lock_key
+from app.db.order_models import Order, OrderStatus
+from app.redis.keys import (
+    HOLDS_CONFIRMING_KEY,
+    HOLDS_EXPIRY_KEY,
+    hold_key,
+    inventory_key,
+    rehydrate_lock_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,20 +41,47 @@ WAIT_SECONDS = 2.0
 POLL_SECONDS = 0.05
 
 
-async def seats_in_active_holds(redis: Redis, event_id: int, tier_id: int) -> int:
-    """Sum the quantity of every live hold on this tier.
+async def active_holds(redis: Redis, event_id: int, tier_id: int) -> dict[str, int]:
+    """Every live hold on this tier, as {hold_id: quantity}.
 
-    Every live hold is listed in holds:expiry. This walks all of them, which is
-    fine at this scale; a per-tier index would make it cheaper if needed.
+    Live holds are listed in holds:expiry (HELD) or holds:confirming (being
+    bought). This walks both, which is fine at this scale; a per-tier index
+    would make it cheaper if needed.
     """
-    total = 0
-    async for member, _score in redis.zscan_iter(HOLDS_EXPIRY_KEY):
-        status, event, tier, qty = await redis.hmget(
-            hold_key(str(member)), ["status", "event", "tier", "qty"]
+    holds: dict[str, int] = {}
+    for index_key in (HOLDS_EXPIRY_KEY, HOLDS_CONFIRMING_KEY):
+        async for member, _score in redis.zscan_iter(index_key):
+            hold_id = str(member)
+            try:
+                status, event, tier, qty = await redis.hmget(
+                    hold_key(hold_id), ["status", "event", "tier", "qty"]
+                )
+            except ResponseError:
+                # Not a hash, so not a real hold (found in S3.3: one corrupt entry
+                # used to block every rebuild and halt the sale). Skipping it can't
+                # hide real held seats; log it so someone can look.
+                logger.warning("rehydrate: skipping malformed hold record %s", hold_id)
+                continue
+            if status in ACTIVE_HOLD_STATUSES and event == str(event_id) and tier == str(tier_id):
+                holds[hold_id] = int(qty or 0)
+    return holds
+
+
+async def seats_in_pending_orders_without_a_live_hold(
+    session: AsyncSession, tier_id: int, live_hold_ids: set[str]
+) -> int:
+    """Seats in PENDING orders whose hold is no longer in Redis.
+
+    A PENDING order normally still has its CONFIRMING hold in Redis, already
+    counted above, so counting the order too would subtract its seats twice.
+    Only orders whose hold has vanished (say, Redis was flushed) are added here.
+    """
+    rows = await session.execute(
+        select(Order.hold_id, Order.quantity).where(
+            Order.tier_id == tier_id, Order.status == OrderStatus.PENDING
         )
-        if status in ACTIVE_HOLD_STATUSES and event == str(event_id) and tier == str(tier_id):
-            total += int(qty or 0)
-    return total
+    )
+    return sum(quantity for hold_id, quantity in rows if hold_id not in live_hold_ids)
 
 
 async def compute_available(
@@ -55,10 +90,11 @@ async def compute_available(
     tier = await session.get(Tier, tier_id)
     if tier is None or tier.event_id != event_id:
         raise ValueError(f"tier {tier_id} does not belong to event {event_id}")
-    held = await seats_in_active_holds(redis, event_id, tier_id)
-    pending_orders = 0  # Phase C: + seats in PENDING orders not yet fulfilled
+    holds = await active_holds(redis, event_id, tier_id)
+    held = sum(holds.values())
+    pending = await seats_in_pending_orders_without_a_live_hold(session, tier_id, set(holds))
     # Never negative: if the sums ever disagree, under-selling is the safe side.
-    return max(0, tier.capacity - tier.sold - held - pending_orders)
+    return max(0, tier.capacity - tier.sold - held - pending)
 
 
 async def rehydrate_tier(session: AsyncSession, redis: Redis, event_id: int, tier_id: int) -> bool:

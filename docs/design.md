@@ -346,3 +346,52 @@ backstops, no hot rows) get their own sections when those parts are built.
 - **Limits of a mock:** charges live in process memory (lost on restart, not
   shared between replicas). That's fine, because the order in Postgres, not
   the mock, is the record of a purchase.
+
+### Confirming a hold (S3.3)
+- **Flow:**
+  1. `consume_hold.lua` checks the hold exists, belongs to the caller, is
+     HELD and is unexpired. It sets CONFIRMING, moves the hold from
+     `holds:expiry` to `holds:confirming` (score = expires_at + grace),
+     extends the record's TTL to 24 h, and returns the hold's own event,
+     tier and quantity.
+  2. Price = tier price (Postgres) x the hold's quantity, then a purchase-cap
+     pre-check.
+  3. Charge the mock provider, with idempotency key `hold:{hold_id}`.
+  4. One transaction: lock the user's row (`SELECT ... FOR UPDATE`), re-check
+     the cap, insert the PENDING order plus the `order.placed` outbox row,
+     and commit.
+  5. Respond 202 `{order_id, status}`.
+- **Failure handling:** any error after step 1 runs `revert_hold.lua`
+  (CONFIRMING -> HELD, back on `holds:expiry` with its original expiry). A
+  payment already taken is refunded. So payment declined, provider down, the
+  cap reached, or a DB error all leave the user holding their seats.
+- **Why lock the user row, not a shared row:** two confirms by the same user
+  could both pass the "under 10 tickets" check (check-then-insert). The lock
+  serialises one user's confirms only, so it isn't a hot row (rule 7).
+- **No database transaction is open during the payment call:** the pre-check
+  transaction is ended before charging, and the lock is only taken
+  afterwards, so a slow provider never holds a database lock.
+- **Idempotency:** the same Redis machinery as holds, shared through
+  `app/api/idempotent.py` (`run_idempotently`, which the hold route now uses
+  too). Backstops are `uq_orders_hold_id` and
+  `uq_orders_user_id_idempotency_key`. Confirming an already-confirmed hold
+  with a new key returns the existing order. Concurrent confirms get 409
+  `confirm_in_progress` until the first one commits.
+- **Errors:** 404 hold_not_found (unknown or foreign, rule 1), 410
+  hold_expired, 402 / 503 / 422 from payments, 409 purchase_limit_exceeded,
+  and 409 confirm_in_progress.
+- **Rehydrate now counts pending orders:** live holds (HELD in
+  `holds:expiry`, plus CONFIRMING in `holds:confirming`), plus PENDING
+  orders whose hold is no longer in Redis. A PENDING order whose CONFIRMING
+  hold is still there is counted once, through the hold.
+- **Still to come:** the sweeper's check on CONFIRMING holds past
+  expiry + grace (section 7.5), and issuing tickets (the worker, M4).
+
+### Robustness: one bad Redis entry must not stop everything (S3.3)
+- **Found while testing the demo cleanup:** a hold-index entry whose record
+  wasn't a hash (WRONGTYPE) made every counter rebuild fail (500 for the
+  rebuilder, 503 for everyone waiting). It would also have failed every
+  sweeper pass.
+- **Fix:** both skip such entries per hold and log them; the sweeper also
+  drops them from `holds:expiry`. They can't be real holds, so skipping
+  them can't hide held seats. Regression tests in adversarial tests 12 and 5.

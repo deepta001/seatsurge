@@ -11,6 +11,7 @@ import logging
 import time
 
 from redis.asyncio import Redis
+from redis.exceptions import ResponseError
 
 from app.redis.keys import HOLDS_EXPIRY_KEY
 from app.redis.scripts import HoldStatus, ReleaseHoldScript, ReleaseOutcome
@@ -29,9 +30,16 @@ async def sweep_expired_holds(redis: Redis, *, now: int, batch_size: int = 100) 
     released = 0
     for raw_id in expired_ids:
         hold_id = str(raw_id)  # text already (decode_responses); str() is for mypy
-        outcome = await release(
-            hold_id, new_status=HoldStatus.EXPIRED, owner_id=None, only_if_expired_at_ms=now
-        )
+        try:
+            outcome = await release(
+                hold_id, new_status=HoldStatus.EXPIRED, owner_id=None, only_if_expired_at_ms=now
+            )
+        except ResponseError:
+            # Not a real hold (e.g. not a hash). Left in place it would fail on
+            # every pass and block every hold behind it, so drop it from the index.
+            logger.error("sweeper: malformed hold %s removed from %s", hold_id, HOLDS_EXPIRY_KEY)
+            await redis.zrem(HOLDS_EXPIRY_KEY, hold_id)
+            continue
         if outcome == ReleaseOutcome.RELEASED:
             released += 1
         elif outcome == ReleaseOutcome.KEY_MISMATCH:

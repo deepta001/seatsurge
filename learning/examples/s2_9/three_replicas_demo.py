@@ -32,7 +32,7 @@ from app.core.tokens import create_access_token
 from app.db.models import EventStatus, SeatingType, UserRole
 from app.db.session import create_db_engine, create_session_factory
 from app.redis.client import create_redis_client
-from app.redis.keys import HOLDS_EXPIRY_KEY, inventory_key
+from app.redis.keys import HOLDS_EXPIRY_KEY, hold_key, idempotency_key, inventory_key
 from app.services.auth import create_admin
 from app.services.events import EventChanges, TierSpec, create_event, update_event
 from learning.examples.s2_1.oversell_demo import run_against_redis
@@ -40,6 +40,9 @@ from learning.examples.s2_1.oversell_demo import run_against_redis
 REPLICAS = ["http://127.0.0.1:8001", "http://127.0.0.1:8002", "http://127.0.0.1:8003"]
 RUN_ID = uuid.uuid4().hex[:8]  # unique per run, so a crashed run can't block the next
 ADMIN_USERNAME = f"demo_s29_{RUN_ID}"
+# Exactly what this run creates in Redis, so cleanup deletes only that (never
+# key patterns like hold:*, which would also wipe anyone else's data).
+USED_IDEMPOTENCY_KEYS: list[tuple[int, str]] = []
 
 
 async def create_sale(seats: int) -> tuple[int, int]:
@@ -78,11 +81,13 @@ async def run_sale(
         async def buyer(user_id: int) -> httpx.Response:
             replica = REPLICAS[user_id % len(REPLICAS)]  # round-robin, like nginx later
             token = create_access_token(user_id, UserRole.USER)
+            key = str(uuid.uuid4())
+            USED_IDEMPOTENCY_KEYS.append((user_id, key))
             await start.wait()
             return await http.post(
                 f"{replica}/events/{event_id}/holds",
                 json={"tier_id": tier_id, "quantity": 1},
-                headers={"Authorization": f"Bearer {token}", "Idempotency-Key": str(uuid.uuid4())},
+                headers={"Authorization": f"Bearer {token}", "Idempotency-Key": key},
             )
 
         tasks = [asyncio.create_task(buyer(u)) for u in range(1, buyers + 1)]
@@ -94,15 +99,19 @@ async def run_sale(
         return list(results), time.perf_counter() - began
 
 
-async def cleanup(event_id: int | None, tier_id: int | None) -> None:
+async def cleanup(event_id: int | None, tier_id: int | None, hold_ids: list[str]) -> None:
+    """Delete ONLY what this run created: its holds, its idempotency keys, its event's keys."""
     redis = create_redis_client()
     try:
-        keys = [k async for k in redis.scan_iter("hold:*")]
-        keys += [k async for k in redis.scan_iter("idem:*")]
+        keys = [hold_key(h) for h in hold_ids]
+        keys += [idempotency_key(user_id, key) for user_id, key in USED_IDEMPOTENCY_KEYS]
         if event_id is not None and tier_id is not None:
             keys += [inventory_key(event_id, tier_id)]
-            keys += [k async for k in redis.scan_iter(f"uhold:{event_id}:*")]
-        await redis.delete(*keys, HOLDS_EXPIRY_KEY)
+            keys += [k async for k in redis.scan_iter(f"uhold:{event_id}:*")]  # this event only
+        if keys:
+            await redis.delete(*keys)
+        if hold_ids:
+            await redis.zrem(HOLDS_EXPIRY_KEY, *hold_ids)
     finally:
         await redis.aclose()
     engine = create_db_engine()
@@ -128,6 +137,7 @@ async def main() -> None:
 
     event_id: int | None = None
     tier_id: int | None = None
+    hold_ids: list[str] = []
     try:
         event_id, tier_id = await create_sale(args.seats)
         results, seconds = await run_sale(event_id, tier_id, args.buyers)
@@ -138,10 +148,13 @@ async def main() -> None:
                 outcomes[type(result).__name__] += 1
             else:
                 outcomes[str(result.status_code)] += 1
+                if result.status_code == 201:
+                    hold_ids.append(result.json()["hold_id"])
 
         redis = create_redis_client()
         left = str(await redis.get(inventory_key(event_id, tier_id)))
-        hold_records = await redis.zcard(HOLDS_EXPIRY_KEY)
+        # Count only this run's holds that Redis really recorded.
+        hold_records = sum([await redis.exists(hold_key(h)) for h in hold_ids])
         await redis.aclose()
 
         print(f"Atomic Lua, 3 API processes: {args.buyers} buyers, {args.seats} seats")
@@ -157,7 +170,7 @@ async def main() -> None:
                 f"oversold={max(0, naive.sold - args.seats)}"
             )
     finally:
-        await cleanup(event_id, tier_id)
+        await cleanup(event_id, tier_id, hold_ids)
         print("demo data cleaned up")
 
 
