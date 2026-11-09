@@ -762,3 +762,14 @@ recovers:
 - **Reconcile for reserved events** rebuilds the sold set (forced, in one
   MULTI/EXEC) instead of tier counters, and re-queues PENDING orders as
   before.
+
+### Proving seats are never sold twice (S6.3)
+Each layer was tested on its own, and broken on purpose:
+- **Redis alone** (the race test): with the Lua "already held" check
+  removed, buyers did get overlapping holds, but Postgres still refused
+  every second ticket. Only the orders' FAILED status gave it away.
+- **Postgres alone** (Redis wiped, 20 orders for one seat issued at once):
+  exactly one ticket. With the partial unique index removed, that test
+  fails.
+- **Time** (a hold expires, then someone else buys): the late confirm gets
+  410, and a hold being confirmed is never swept.

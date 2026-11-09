@@ -48,6 +48,7 @@ checked. The teach-back for all of them happens at the end.
 - S6.1 Reserved seating: data model and seat-map endpoint: built, not checked.
 - S6.2 reserve_seats.lua (all-or-nothing) and seat holds: built, not checked.
 - S6.2b Buying held seats (added step): built, not checked.
+- S6.3 Seat tests, including double-sell protection (test 4b): built, not checked.
 
 ## Shaky topics
 
@@ -1956,5 +1957,45 @@ a missing set can be told apart; deleting only what you own.
 order to message to ticket), defence in depth for seats (Lua, then the
 partial unique index), never building a partial cache, compensations that
 must not undo what someone else legitimately owns.
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S6.3: Seat tests, including double-sell protection (2026-11-09)
+
+**What was built:** `tests/adversarial/test_04b_reserved_seats_never_double_sold.py`,
+the reserved-seating version of test 4, with 4 tests:
+1. **The lock's time passes, then someone else buys.** Buyer 1's hold
+   expires and is swept; buyer 2 holds and buys the seat; buyer 1's late
+   confirm gets 410 `hold_expired`; exactly one ticket is issued, for
+   buyer 2.
+2. **A hold being confirmed is never swept,** even an hour past its expiry.
+3. **Redis wiped, 20 PENDING orders for one seat, all issued at the same
+   moment:** exactly 1 ticket and 19 `InvariantViolation` (that exact error).
+   Only the partial unique index stands between them.
+4. **40 buyers race through the whole pipeline for 12 seats** (1-3 seats
+   each; hold, confirm, worker): no seat has two live tickets, every order
+   is CONFIRMED, there are no dead letters, and Redis's sold set, Postgres's
+   tickets and the seat map all agree.
+
+**Ran it:**
+- 292/292 tests passed; ruff and mypy are clean; the new tests passed 3
+  runs in a row.
+- Mutation check:
+  1. dropping `uq_tickets_issued_seat` (with a throwaway pytest plugin
+     against the test database): the wiped-Redis test failed;
+  2. the Lua script skipping the "already held" check: the race test
+     failed in 3 runs out of 3. **Notably, its "no seat has two live
+     tickets" assertion still passed:** with Redis broken, Postgres
+     refused every second ticket. The test failed because those orders
+     ended FAILED. That is defence in depth, demonstrated.
+
+**Debugging moments:** none; the step was tests only and they passed first
+time (which is why the mutation check matters).
+
+**Key concepts:** testing each layer of defence on its own, races through
+a whole pipeline rather than one function, checking that several stores
+agree.
 
 **Understanding check:** deferred to the end of the project.
