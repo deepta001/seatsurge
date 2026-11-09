@@ -41,6 +41,7 @@ checked. The teach-back for all of them happens at the end.
 - S4.4 Idempotent processing (test 7) and the process-twice demo: built, not checked.
 - S4.5 Ticket issuing with the DB backstop (test 4) and the unique-constraint demo: built, not checked.
 - S4.6 Typed errors, retries, dead letters and inventory release (test 9): built, not checked.
+- S4.7 Relay crash test (test 10) and the kill-the-relay demo: built, not checked.
 
 ## Shaky topics
 
@@ -1543,5 +1544,56 @@ here.
 backoff, the pending entries list as a retry queue, XCLAIM with
 `min_idle_time` as a safe takeover, dead-letter queues, compensating
 actions after a commit.
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S4.7: Relay crash test with the "kill it on purpose" demo; test 10 (2026-11-09)
+
+**What was built:**
+- `tests/adversarial/test_10_relay_crash_still_delivers.py`, three crash
+  points:
+  1. The order is committed while no relay runs: it waits in the outbox and
+     is delivered when the relay starts.
+  2. The relay dies right after XADD, before its commit (simulated with a
+     `BaseException` the relay can't catch): the row stays PENDING, is
+     published again, the stream holds 2 copies with the same `outbox_id`,
+     and exactly 3 tickets are issued.
+  3. The relay's database connection is killed (`pg_terminate_backend`)
+     while it holds the row lock: Postgres frees the lock, and the next relay
+     delivers the order without waiting.
+- `learning/examples/s4_7/kill_relay_demo.py`: real processes. A relay
+  child process hard-kills itself (`os._exit(137)`) right after its XADD;
+  then the real worker is started.
+
+**Ran it:**
+- 242/242 tests passed; ruff and mypy are clean.
+- The demo on the dev stack:
+
+  | Moment | Order | Outbox row | Stream copies | Tickets |
+  |---|---|---|---|---|
+  | After the commit | PENDING | PENDING | 0 | none |
+  | The relay is killed after publishing (exit code 137) | PENDING | PENDING | 1 | none |
+  | After the real worker ran | CONFIRMED | PUBLISHED | **2** | **[1, 2]** |
+
+  It refuses to run if any other outbox row is PENDING, and deleted only
+  its own rows and stream copies.
+- No mutation check this step: the ways to break it (dropping the duplicate
+  check, or committing before publishing) are already covered by tests 7
+  and 8 and the S4.1 relay tests.
+
+**Debugging moments:**
+1. The demo's lines printed out of order (the child's line before the
+   parent's) because the parent's output was buffered. It now uses line
+   buffering.
+2. The full suite went from about 47 s to about 125 s during this step. The
+   same slowdown happens with test 10 deselected, and no single test
+   stands out, so it is environmental and not from this step's code. The
+   cause is not confirmed.
+
+**Key concepts:** crash points and what state each leaves behind; the
+outbox as a durable to-do list; at-least-once plus idempotency as
+"exactly-once effect"; Postgres releasing a dead session's locks.
 
 **Understanding check:** deferred to the end of the project.

@@ -504,3 +504,12 @@ Plain-English meanings of every technical term, with where it first appears.
 | Dead-letter queue | Where messages go when the system gives up on them, for a human to look at. | `stream:orders:dead` |
 | Compensation | Undoing earlier steps when a process can't finish (fail the order, release the seats). | `fail_order_and_release_hold()` |
 | FAILED | Order status: it could not be fulfilled and its seats were given back. | `orders.status` |
+
+## Relay crashes (S4.7)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| Crash point | A specific moment a process could die; each must leave a state the system can recover from. | Test 10 |
+| Exactly-once effect | Messages may arrive more than once, but the result (tickets issued) happens once. | Outbox, then `run_once` |
+| `os._exit` | Ends a Python process immediately: no cleanup, no `finally`, like a real crash. | The S4.7 demo |
+| `pg_terminate_backend` | A Postgres function that kills another session; its transaction is rolled back and its locks are freed. | Test 10 |

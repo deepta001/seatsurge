@@ -593,3 +593,16 @@ backstops, no hot rows) get their own sections when those parts are built.
     process);
   - metrics (`invariant_violations_total`, dead-letter count), which come
     in S8.2. ERROR logs are the alert for now.
+
+### Relay crashes (S4.7)
+Every place the relay can die leaves a recoverable state:
+
+| Crash point | State left behind | Recovery |
+|---|---|---|
+| Before the relay runs at all | Order + PENDING outbox row (one transaction) | The next relay pass publishes it |
+| After XADD, before marking PUBLISHED | Message on the stream, row still PENDING | Published again: a duplicate with the same `outbox_id`, skipped by `run_once` |
+| While holding row locks (connection dies) | Locks held by a dead session | Postgres ends the session and frees its locks; the next relay takes the rows |
+
+The one order that would lose messages is "mark PUBLISHED, then XADD": a
+crash in between leaves a row that says PUBLISHED but was never sent. The
+relay never does that.
