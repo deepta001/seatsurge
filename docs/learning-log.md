@@ -49,6 +49,7 @@ checked. The teach-back for all of them happens at the end.
 - S6.2 reserve_seats.lua (all-or-nothing) and seat holds: built, not checked.
 - S6.2b Buying held seats (added step): built, not checked.
 - S6.3 Seat tests, including double-sell protection (test 4b): built, not checked.
+- S7.1 Rate limiting (test 14): built, not checked.
 
 ## Shaky topics
 
@@ -1997,5 +1998,73 @@ time (which is why the mutation check matters).
 **Key concepts:** testing each layer of defence on its own, races through
 a whole pipeline rather than one function, checking that several stores
 agree.
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## Phase E starts. S7.1: Rate limiting; test 14 (2026-11-09)
+
+The Phase D review was skipped (the student chose "Start S7.1").
+
+**What was built:**
+- `app/redis/lua/rate_limit.lua`: a sliding window in a sorted set:
+  - drop entries older than the window, then count the rest;
+  - refuse (returning the ms until the oldest entry leaves), or ZADD this
+    request;
+  - PEXPIRE the key.
+  - The time comes from Redis's own `TIME`, so all replicas share one
+    clock.
+- `app/redis/rate_limit.py`: `RateLimiter.retry_after_seconds()`, plus
+  `hashed()` so email addresses never appear in Redis keys.
+- `app/api/rate_limits.py`:
+  - `limit_holds`: a dependency on `POST /events/{id}/holds`, checked
+    before anything else; 20 per user per 60 s.
+  - `limit_login`: 5 per email and 20 per IP per 60 s, counting every
+    attempt. If Redis is unreachable the check is skipped (and logged), so
+    an outage can't lock users out.
+- `RateLimited` 429 with an instance-level `Retry-After`. Settings
+  `rate_limit_*` are added (also in `.env.example`).
+- Tests: the shared `client` fixture now gives the app the test Redis
+  (login needs it). The suite sets the limits very high; test 14 lowers
+  them.
+
+**Ran it:**
+- 298/298 tests passed; ruff and mypy are clean; test 14 (6 tests) passed
+  3 runs in a row.
+- Test 14 checks:
+  - a per-user hold limit (the 4th request gets 429 with Retry-After 1-2 s;
+    another user is unaffected; it recovers after the window);
+  - **40 simultaneous requests with a limit of 10: exactly 10 get through**;
+  - after 3 wrong passwords even the right one gets 429, while another
+    account is unaffected; it recovers after the window;
+  - a per-IP limit across many emails;
+  - login works with Redis down;
+  - the window slides one request at a time.
+- Mutation check:
+  1. `>` instead of `>=`: caught (4 tests);
+  2. **old requests never leaving the window: not caught at first**, because
+     the key expiring as a whole hid it. The sliding test was added, and it
+     is now caught;
+  3. no per-email limit: caught;
+  4. failing closed when Redis is down: caught.
+- Live against the API: 5 wrong-password logins gave 401, and the 6th gave
+  **429 `rate_limited` with `Retry-After: 60`**. The Redis key held a hash,
+  not the address. Only the demo's two keys were deleted.
+
+**Debugging moments:**
+1. **A test bug from S6.3 surfaced:** the seat race test occasionally failed
+   when the random race sold all 12 seats. The assertion demanded
+   `{"AVAILABLE"}` among the unsold seats, but there were none. It was
+   tracked down by repeating full runs until it failed, then fixed (`<=`
+   instead of `==`). It was not a bug in the app.
+2. Mutation 2's escape, above.
+
+**Known limitation:** behind nginx (S8.1) every request will appear to come
+from nginx's IP until forwarded addresses are trusted; that's part of S8.1.
+
+**Key concepts:** sliding-window rate limiting, server-side time, failing
+open vs closed, keeping personal data out of cache keys, 429 and
+Retry-After.
 
 **Understanding check:** deferred to the end of the project.

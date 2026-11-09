@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_user, get_db_session, get_redis
 from app.api.idempotent import run_idempotently
+from app.api.rate_limits import limit_holds
 from app.core.tokens import AccessTokenClaims
 from app.services.holds import cancel_hold, create_hold, create_seat_hold
 
@@ -55,6 +56,8 @@ class HoldResponse(BaseModel):
     "/events/{event_id}/holds",
     status_code=status.HTTP_201_CREATED,
     response_model=HoldResponse,
+    # Checked before anything else: a flood of requests never reaches Redis's scripts.
+    dependencies=[Depends(limit_holds)],
 )
 async def create(
     event_id: int,

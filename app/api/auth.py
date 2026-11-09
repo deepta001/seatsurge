@@ -3,11 +3,13 @@
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from pydantic import BaseModel, ConfigDict, Field
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import get_db_session
+from app.api.dependencies import get_db_session, get_redis
+from app.api.rate_limits import client_ip, limit_login
 from app.core.settings import get_settings
 from app.core.tokens import create_access_token
 from app.db.models import User, UserRole
@@ -97,9 +99,17 @@ def token_response(user: User, refresh_token: str) -> TokenResponse:
 
 @router.post("/login")
 async def login(
-    body: LoginRequest, session: AsyncSession = Depends(get_db_session)
+    body: LoginRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    redis: Redis = Depends(get_redis),
 ) -> TokenResponse:
-    """Swap a correct email and password for an access token and a refresh token."""
+    """Swap a correct email and password for an access token and a refresh token.
+
+    Rate limited per email and per IP (429 with Retry-After), counting every
+    attempt, so guessing passwords is slow.
+    """
+    await limit_login(redis, email=body.email, ip=client_ip(request))
     user = await authenticate_user(session, email=body.email, password=body.password)
     refresh_token = await issue_refresh_token(session, user.id)
     return token_response(user, refresh_token)

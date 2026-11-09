@@ -203,3 +203,14 @@ class SeatTaken(DomainError):
     status_code = 409
     code = "seat_taken"
     message = "One or more of those seats is no longer available."
+
+
+class RateLimited(DomainError):
+    status_code = 429
+    code = "rate_limited"
+    message = "Too many requests. Please wait a moment and try again."
+
+    def __init__(self, retry_after_seconds: int) -> None:
+        super().__init__()
+        # Retry-After tells the client exactly how long to wait (section 8).
+        self.headers = {"Retry-After": str(retry_after_seconds)}

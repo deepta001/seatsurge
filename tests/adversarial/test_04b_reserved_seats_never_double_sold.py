@@ -192,4 +192,5 @@ async def test_many_buyers_racing_through_the_whole_pipeline_never_share_a_seat(
     assert sold_set == {"built", *(str(seat) for seat in sold)}
     states = await seat_states(client, venue)
     assert {seat for seat, state in states.items() if state == "SOLD"} == set(sold)
-    assert {state for seat, state in states.items() if seat not in sold} == {"AVAILABLE"}
+    # Every unsold seat is AVAILABLE (there may be none left, if all 12 sold).
+    assert {state for seat, state in states.items() if seat not in sold} <= {"AVAILABLE"}

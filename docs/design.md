@@ -773,3 +773,34 @@ Each layer was tested on its own, and broken on purpose:
   fails.
 - **Time** (a hold expires, then someone else buys): the late confirm gets
   410, and a hold being confirmed is never swept.
+
+## Phase E: hardening
+
+### Rate limiting (S7.1)
+- **A sliding window, per caller:** a sorted set of the caller's request
+  times. Each check drops entries older than the window and counts the
+  rest. That gives "at most N in *any* window", without the burst at the
+  edge of a fixed "per minute" bucket (2N in two seconds across a minute
+  boundary).
+- **Atomic in Lua,** so 40 simultaneous requests with a limit of 10 let
+  exactly 10 through.
+- **Redis's clock (`TIME`), not the API's,** so replicas with skewed clocks
+  share one window.
+- **Memory:** at most N entries per active caller; keys expire after a quiet
+  window. A token bucket would use constant memory but is harder to explain
+  and test; at these limits (5-20) the difference is small.
+- **What is limited:**
+
+  | Route | Limit (per 60 s) | Why |
+  |---|---|---|
+  | `POST /events/{id}/holds` | 20 per user | Stops one user hammering the sale; checked before anything touches inventory |
+  | `POST /auth/login` | 5 per email | Slows password guessing on one account; counts successes too, so a guesser can't tell when a password is right |
+  | `POST /auth/login` | 20 per client IP | Slows credential stuffing (one source, many accounts) |
+
+- **Email addresses are hashed** in keys, so no personal data sits in Redis.
+- **Fail open for login:** if Redis is unreachable, login skips the check
+  and logs it. Login otherwise doesn't need Redis, and a Redis outage
+  shouldn't lock every user out. Holds need Redis anyway, so their limit
+  can't be skipped.
+- **Known gap:** behind nginx, the client IP is nginx's until forwarded
+  addresses are trusted (S8.1).

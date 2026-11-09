@@ -47,6 +47,13 @@ class Settings(BaseSettings):
     # checks whether it ever produced an order.
     confirm_grace_seconds: int = Field(default=120, ge=10, le=3600)
 
+    # Rate limits (CLAUDE.md sections 7.1 and 9): at most N requests per window.
+    # Holds per user; logins per email address and per client IP.
+    rate_limit_window_seconds: float = Field(default=60.0, gt=0, le=3600)
+    rate_limit_holds: int = Field(default=20, ge=1)
+    rate_limit_login_per_email: int = Field(default=5, ge=1)
+    rate_limit_login_per_ip: int = Field(default=20, ge=1)
+
     # Mock payments only (there are no real payments in this project): the
     # chance that a valid "tok_ok" charge is randomly declined, for testing
     # failure paths. 0.0 = never, 1.0 = always.

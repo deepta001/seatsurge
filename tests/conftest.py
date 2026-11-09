@@ -17,6 +17,10 @@ os.environ["ENVIRONMENT"] = "test"
 os.environ["DATABASE_URL"] = "postgresql+asyncpg://test:test@127.0.0.1:1/test"
 os.environ["REDIS_URL"] = "redis://:test@127.0.0.1:1/0"
 os.environ["JWT_SECRET_KEY"] = "test-only-signing-key-that-is-at-least-32-chars"
+# Rate limits high enough that ordinary tests never meet them; test 14 lowers them.
+os.environ["RATE_LIMIT_HOLDS"] = "100000"
+os.environ["RATE_LIMIT_LOGIN_PER_EMAIL"] = "100000"
+os.environ["RATE_LIMIT_LOGIN_PER_IP"] = "100000"
 
 # Shared fixtures: selling seats (`sale`), outbox rows (`sessions`), reserved seats (`venue`).
 pytest_plugins = ["tests.sales", "tests.outbox", "tests.seating"]
@@ -34,7 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engin
 from testcontainers.community.postgres import PostgresContainer  # noqa: E402
 from testcontainers.community.redis import RedisContainer  # noqa: E402
 
-from app.api.dependencies import get_db_session  # noqa: E402
+from app.api.dependencies import get_db_session, get_redis  # noqa: E402
 from app.db.session import create_session_factory  # noqa: E402
 from app.main import app  # noqa: E402
 from app.redis.client import build_redis_client  # noqa: E402
@@ -74,8 +78,8 @@ async def db_engine(postgres_url: str) -> AsyncIterator[AsyncEngine]:
 
 
 @pytest_asyncio.fixture(loop_scope="session")
-async def client(db_engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
-    """An HTTP client wired to the test database. Tables are emptied after each test."""
+async def client(db_engine: AsyncEngine, redis: Redis) -> AsyncIterator[AsyncClient]:
+    """An HTTP client wired to the test database and test Redis. Both are emptied afterwards."""
     session_factory = create_session_factory(db_engine)
 
     async def session_for_tests() -> AsyncIterator[AsyncSession]:
@@ -83,6 +87,8 @@ async def client(db_engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
             yield session
 
     app.dependency_overrides[get_db_session] = session_for_tests
+    # Login is rate limited in Redis (S7.1), so every API test needs one.
+    app.dependency_overrides[get_redis] = lambda: redis
     # ASGITransport calls the app directly in this event loop: no server, no port.
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:

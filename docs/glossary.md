@@ -567,3 +567,13 @@ Plain-English meanings of every technical term, with where it first appears.
 | Partial unique index | A uniqueness rule that only applies to rows matching a condition (here: ISSUED tickets). | `uq_tickets_issued_seat` |
 | `MULTI` / `EXEC` | Redis transaction: queued commands run together, with nothing in between. | `rebuild_sold_set(force=True)` |
 | `SREM` | Redis: remove values from a set. | Cancel, failed orders |
+
+## Rate limiting (S7.1)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| Rate limit | A cap on how many requests a caller may make in a period. | `rate_limit.lua` |
+| Sliding window | Counts requests in the last N seconds from *now*, rather than resetting on the minute. | `rate_limit.lua` |
+| 429 Too Many Requests | "Slow down"; `Retry-After` says how many seconds to wait. | `RateLimited` |
+| Fail open / fail closed | When a safety check can't run: let the request through (open) or refuse it (closed). | Login with Redis down |
+| Credential stuffing | Trying leaked email/password pairs across many accounts. | Per-IP login limit |
