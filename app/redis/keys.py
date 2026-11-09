@@ -38,3 +38,8 @@ def idempotency_key(user_id: int, key: str) -> str:
 def rehydrate_lock_key(event_id: int, tier_id: int) -> str:
     """Held by whichever process is rebuilding this tier's missing counter."""
     return f"lock:rehydrate:{event_id}:{tier_id}"
+
+
+def seats_returned_key(order_id: str) -> str:
+    """Marks a cancelled order whose seats are already back on the counter (no double return)."""
+    return f"returned:{order_id}"

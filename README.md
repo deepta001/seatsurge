@@ -32,6 +32,7 @@ try to buy the same limited seats at once.
 | **Relay crashes lose nothing (test 10):** an order committed while the relay is down, or a relay killed right after publishing (before marking the row), or one whose database connection dies while holding row locks: in every case the order is delivered and gets its tickets exactly once | outbox relay | adversarial test 10 |
 | **Reconcile (Phase D):** an admin rebuilds an event's Redis seat counters from Postgres and live holds, fixing drift (shows before and after); holds pause briefly while each counter is rebuilt, so reconciling mid-sale never oversells | `POST /admin/events/{id}/reconcile` | `tests/integration/test_reconcile.py` |
 | **Redis flushed mid-sale (test 11):** no oversell (counters rebuilt from Postgres: 56 rush requests won exactly the 39 seats really left); the worker re-creates its consumer group by itself; reconcile re-sends PENDING orders whose messages were wiped; the sale then completes with exactly 50 tickets for 50 seats | Redis flush recovery | adversarial test 11 |
+| **Cancel (test 13):** cancel your confirmed order; tickets and order become CANCELLED and `sold` drops in one transaction; the worker then puts the seats back on sale exactly once; ticket numbers are never reused (a re-buy gets new numbers); repeated or simultaneous cancels change nothing | `POST /orders/{id}/cancel` | adversarial test 13 |
 | **Never oversell (test 1):** 500 concurrent HTTP buyers wanting 1-4 seats on 50 seats never take more than 50 (also with the counter rebuilt mid-rush); the test fails if the atomic script is swapped for naive check-then-take. A demo with 3 API processes on the dev stack: 1,000 buyers / 100 seats gave exactly 100 holds | `POST /events/{id}/holds` | `tests/concurrency/test_01_concurrent_holds_never_oversell.py` |
 | **Holds:** reserve 1-10 seats for 5 minutes via one atomic Redis Lua script; 409 sold_out or hold_limit_exceeded (10 per user per event); a missing counter is a 503, never zero. 300 simultaneous HTTP requests on 50 seats give exactly 50 holds | `POST /events/{id}/holds` | `tests/integration/test_holds_api.py`, `tests/integration/test_reserve_tier.py` |
 | A missing Redis counter is rebuilt from Postgres + active holds (one rebuild at a time, even for 50 simultaneous requests), never treated as zero; 503 only if the rebuild can't finish | automatic in `POST /events/{id}/holds` | adversarial test 12 |
@@ -39,7 +40,7 @@ try to buy the same limited seats at once.
 | Limits: 1-10 seats per hold; at most 10 held per user per event, even with many simultaneous requests; request bodies over 16 KB get 413 before being read | middleware + `reserve_tier.lua` | `tests/concurrency/test_user_hold_cap.py`, `tests/unit/test_body_limit.py` |
 | Safe retries: a required `Idempotency-Key`; the same key replays the first answer (one hold, even for 10 simultaneous retries); the same key with a different body is a 422 | `Idempotency-Key` header | adversarial test 6 |
 
-The 251 tests (55 unit, 135 integration, 7 concurrency, 54 adversarial) run
+The 258 tests (55 unit, 135 integration, 7 concurrency, 61 adversarial) run
 against a real Postgres 16 and Redis 7 started by testcontainers. CI also applies every migration to an
 empty database, runs `alembic check` for model drift, and proves the
 downgrade path.

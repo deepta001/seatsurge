@@ -657,3 +657,34 @@ recovers:
 - **Edge case:** PUBLISHED rows are deleted after 24 h. An order still
   PENDING after that has no row to re-queue. That's unlikely, because the
   worker dead-letters long before.
+
+### Cancellation (S5.3)
+- **Postgres first, in one transaction:** lock the order (FOR UPDATE), then:
+  - the order and its tickets become CANCELLED;
+  - `sold = sold - q`;
+  - an `order.cancelled` outbox row is written.
+
+  The order lock makes concurrent cancels take turns: the second sees
+  CANCELLED and changes nothing. A test forces that exact interleaving.
+- **Numbers are never reused:** `next_number` only ever goes up, so a re-buy
+  gets new numbers. The partial unique index ignores CANCELLED tickets, so
+  even a bug that reused a number wouldn't clash with a cancelled ticket;
+  the counter guarantees it doesn't happen.
+- **Redis after the commit (rule 6):** the worker's handler checks the order
+  is CANCELLED, then `return_seats.lua` adds the seats back to the counter.
+  - It sets a `returned:{order_id}` marker with SET NX first, so a
+    redelivered message changes nothing.
+  - `run_once` runs after-commit steps for duplicates too (S4.5), so the
+    script itself must be once-only; the marker makes it so.
+  - A missing counter is never created (rule 4). The next rebuild reads the
+    lowered `sold` and counts those seats as free.
+- **Only CONFIRMED orders can be cancelled.** A PENDING order might be
+  getting its tickets at that moment, and supporting it would mean racing
+  the worker. Users can wait the half-second until it is CONFIRMED.
+- **Not covered:**
+  - refunds, because the mock payment provider has no persistent charge
+    records;
+  - a Redis flush that wipes a `returned:*` marker before a duplicate cancel
+    message arrives. That would return the seats twice to the Redis gate
+    (the database backstop still prevents an oversell, and reconcile
+    corrects the counter).

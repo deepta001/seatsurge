@@ -1,4 +1,6 @@
-"""POST /holds/{hold_id}/confirm: pay for a hold and get a PENDING order (202 Accepted).
+"""Order routes. POST /holds/{hold_id}/confirm: pay for a hold, get a PENDING order (202).
+
+POST /orders/{order_id}/cancel: cancel your CONFIRMED order (S5.3).
 
 "Accepted" because the tickets aren't issued yet: the worker does that after
 reading the outbox (Phase C, M4). The client can poll the order (S4.x).
@@ -16,6 +18,7 @@ from app.api.dependencies import get_current_user, get_db_session, get_payments,
 from app.api.idempotent import run_idempotently
 from app.core.tokens import AccessTokenClaims
 from app.db.order_models import OrderStatus
+from app.services.cancellations import cancel_order
 from app.services.orders import confirm_hold
 from app.services.payments import MockPaymentProvider
 
@@ -78,3 +81,22 @@ async def confirm(
         success_status=status.HTTP_202_ACCEPTED,
         work=work,
     )
+
+
+class OrderCancelled(BaseModel):
+    order_id: uuid.UUID
+    status: OrderStatus
+
+
+@router.post("/orders/{order_id}/cancel")
+async def cancel(
+    order_id: uuid.UUID,
+    user: AccessTokenClaims = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> OrderCancelled:
+    """Cancel your order. Its seats go back on sale shortly after (the worker does that).
+
+    No Idempotency-Key needed: cancelling is naturally safe to repeat.
+    """
+    order_status = await cancel_order(session, user_id=user.user_id, order_id=order_id)
+    return OrderCancelled(order_id=order_id, status=order_status)

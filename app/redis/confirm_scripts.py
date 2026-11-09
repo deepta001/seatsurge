@@ -1,16 +1,24 @@
-"""Python wrappers for the confirm-time Lua scripts: consume, revert and finish a hold."""
+"""Python wrappers for the order Lua scripts: consume, revert and finish a hold; return seats."""
 
 import enum
 from dataclasses import dataclass
 
 from redis.asyncio import Redis
 
-from app.redis.keys import HOLDS_CONFIRMING_KEY, HOLDS_EXPIRY_KEY, hold_key, user_hold_key
+from app.redis.keys import (
+    HOLDS_CONFIRMING_KEY,
+    HOLDS_EXPIRY_KEY,
+    hold_key,
+    inventory_key,
+    seats_returned_key,
+    user_hold_key,
+)
 from app.redis.scripts import LUA_DIR
 
 CONSUME_HOLD_LUA = (LUA_DIR / "consume_hold.lua").read_text()
 REVERT_HOLD_LUA = (LUA_DIR / "revert_hold.lua").read_text()
 FINISH_HOLD_LUA = (LUA_DIR / "finish_hold.lua").read_text()
+RETURN_SEATS_LUA = (LUA_DIR / "return_seats.lua").read_text()
 
 
 class ConsumeOutcome(enum.Enum):
@@ -83,3 +91,29 @@ class FinishHoldScript:
             args=[hold_id, str(event_id), str(user_id)],
         )
         return FinishOutcome(int(result))
+
+
+class ReturnOutcome(enum.Enum):
+    RETURNED = 1
+    ALREADY_RETURNED = 0
+    COUNTER_MISSING = -1
+
+
+# Long enough to outlive any redelivery of the same message.
+RETURN_MARKER_SECONDS = 7 * 24 * 3600
+
+
+class ReturnSeatsScript:
+    """Give a cancelled order's seats back to the counter, once per order."""
+
+    def __init__(self, redis: Redis) -> None:
+        self._script = redis.register_script(RETURN_SEATS_LUA)
+
+    async def __call__(
+        self, order_id: str, *, event_id: int, tier_id: int, quantity: int
+    ) -> ReturnOutcome:
+        result = await self._script(
+            keys=[inventory_key(event_id, tier_id), seats_returned_key(order_id)],
+            args=[quantity, RETURN_MARKER_SECONDS],
+        )
+        return ReturnOutcome(int(result))

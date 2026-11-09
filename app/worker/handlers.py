@@ -4,6 +4,10 @@
 then, after the commit, mark the Redis hold CONSUMED. If the message is
 dead-lettered instead, its compensation marks the order FAILED and gives the
 hold's seats back, so a failed order never leaks inventory.
+
+`order.cancelled`: the cancel already committed everything in Postgres;
+after checking that, the worker gives the seats back to the Redis counter,
+once per order.
 """
 
 import logging
@@ -15,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.job_errors import PermanentError
 from app.db.order_models import Order, OrderStatus
-from app.redis.confirm_scripts import FinishHoldScript, FinishOutcome
+from app.redis.confirm_scripts import FinishHoldScript, FinishOutcome, ReturnSeatsScript
 from app.redis.scripts import HoldStatus, ReleaseHoldScript, ReleaseOutcome
 from app.services.tickets import issue_tickets
 from app.worker.dead_letters import Compensation
@@ -62,6 +66,29 @@ def finish_hold_after_commit(redis: Redis) -> Handler:
             logger.error("worker: hold %s does not match its order", message.payload["hold_id"])
 
     return finish_hold
+
+
+async def check_order_cancelled(session: AsyncSession, message: StreamMessage) -> None:
+    """The cancel did all the database work; make sure it really committed as CANCELLED."""
+    order_id = payload_order_id(message)
+    order = await session.get(Order, order_id)
+    if order is None or order.status != OrderStatus.CANCELLED:
+        raise PermanentError(f"order {order_id} is not CANCELLED; not returning its seats")
+
+
+def return_seats_after_commit(redis: Redis) -> Handler:
+    return_seats = ReturnSeatsScript(redis)
+
+    async def give_back(message: StreamMessage) -> None:
+        outcome = await return_seats(
+            str(payload_order_id(message)),
+            event_id=payload_int(message, "event_id"),
+            tier_id=payload_int(message, "tier_id"),
+            quantity=payload_int(message, "quantity"),
+        )
+        logger.info("worker: cancelled order %s seats: %s", message.aggregate_id, outcome.name)
+
+    return give_back
 
 
 def fail_order_and_release_hold(
@@ -128,5 +155,8 @@ def build_handlers(
     return {
         "order.placed": run_once(
             session_factory, issue_order_tickets, after_commit=finish_hold_after_commit(redis)
+        ),
+        "order.cancelled": run_once(
+            session_factory, check_order_cancelled, after_commit=return_seats_after_commit(redis)
         ),
     }

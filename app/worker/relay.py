@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 BATCH_SIZE = 50
 # Which stream each outbox event type goes to. An unknown type can never be
 # published, so it is a PermanentError (DEAD at once), not something to retry.
-STREAM_FOR_TYPE = {"order.placed": ORDERS_STREAM_KEY}
+STREAM_FOR_TYPE = {"order.placed": ORDERS_STREAM_KEY, "order.cancelled": ORDERS_STREAM_KEY}
 # Long enough to hold the error's class and message, short enough for a column.
 MAX_ERROR_LENGTH = 500
 

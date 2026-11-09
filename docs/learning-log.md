@@ -44,6 +44,7 @@ checked. The teach-back for all of them happens at the end.
 - S4.7 Relay crash test (test 10) and the kill-the-relay demo: built, not checked.
 - S5.1 Reconcile logic and the admin endpoint: built, not checked.
 - S5.2 Flushing Redis mid-sale and recovering (test 11): built, not checked.
+- S5.3 Cancellation through the outbox (test 13): built, not checked.
 
 ## Shaky topics
 
@@ -1707,5 +1708,70 @@ endpoints.
 **Key concepts:** treating a cache as losable, re-driving work from the
 source of truth, self-healing loops, testing a failure you'd never want to
 cause in a shared environment.
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S5.3: Cancellation through the outbox; test 13 (2026-11-09)
+
+**What was built:**
+- `app/services/cancellations.py`, `cancel_order`. It locks the caller's
+  order (FOR UPDATE), and only a CONFIRMED order can be cancelled. In one
+  transaction:
+  - the order becomes CANCELLED and its tickets CANCELLED;
+  - `UPDATE tiers SET sold = sold - q` (**`next_number` is untouched**);
+  - an `order.cancelled` outbox row is written.
+- Cancelling again returns CANCELLED and changes nothing. A PENDING or FAILED
+  order is 409 `order_not_cancellable`. An unknown or someone else's order
+  is 404 `order_not_found`.
+- `POST /orders/{order_id}/cancel` returns 200 `{order_id, status}`. No
+  Idempotency-Key is needed, because a repeat is harmless.
+- The worker's `order.cancelled` handler checks the order really is
+  CANCELLED, then (after the commit) runs `return_seats.lua`: SET NX on a
+  `returned:{order_id}` marker (7 days), then INCRBY the counter if it
+  exists. Seats come back once per order, and a missing counter is never
+  created (rule 4).
+- The relay now routes `order.cancelled` to `stream:orders`.
+- `tests/adversarial/test_13_cancel_then_rebuy_never_reuses_numbers.py`
+  (7 tests).
+
+**Ran it:**
+- 258/258 tests passed; ruff and mypy are clean.
+- Mutation check:
+  1. lowering `next_number` on cancel (numbers reused): caught;
+  2. no once-only marker: caught (the counter reached 54 instead of 50);
+  3. **no row lock on cancel: at first caught only 1 run in 4** when the
+     whole file ran (a warm connection pool rarely overlaps the 10
+     concurrent requests at the right moment). I added a test that forces
+     the timing: cancel A pauses after reading until cancel B has read. It
+     now catches the mutant 4 runs out of 4.
+  4. return_seats creating a missing counter: caught.
+- Live, with the real API and worker:
+
+  | Step | sold | next_number | Counter | Tickets |
+  |---|---|---|---|---|
+  | Ann bought 3 | 3 | 3 | 7 | #1-3 ISSUED |
+  | Right after the cancel | 0 | 3 | 7 | #1-3 CANCELLED |
+  | After the worker ran | 0 | 3 | 10 | #1-3 CANCELLED |
+  | Bo bought 3 | 3 | 6 | 7 | #1-3 CANCELLED, **#4-6 ISSUED** |
+
+  Cancelling again gave 200; Bo cancelling Ann's order gave 404. Only the
+  demo's own data was deleted.
+
+**Debugging moments:**
+1. The relay only publishes types it knows. Without adding
+   `order.cancelled` to its routing table, every cancel would have gone
+   DEAD as an unknown type (the S4.2 rule working as designed).
+2. The weak race test, above: a concurrency test that passes by luck is
+   not proof. Forcing the interleaving made it reliable.
+
+**Known limitations:** the payment isn't refunded (the mock keeps charges in
+the API process memory and orders don't store a charge id). Cancelling a
+PENDING order isn't supported.
+
+**Key concepts:** compensating a completed purchase, never reusing
+identifiers, idempotent side effects with a marker key, forcing a race in a
+test instead of hoping for it.
 
 **Understanding check:** deferred to the end of the project.

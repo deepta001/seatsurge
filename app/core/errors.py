@@ -171,3 +171,16 @@ class PurchaseLimitExceeded(DomainError):
     status_code = 409
     code = "purchase_limit_exceeded"
     message = "You've reached the most tickets allowed for this event."
+
+
+class OrderNotFound(DomainError):
+    # Also for someone else's order, so ids can't be probed (rule 1).
+    status_code = 404
+    code = "order_not_found"
+    message = "No such order."
+
+
+class OrderNotCancellable(DomainError):
+    status_code = 409
+    code = "order_not_cancellable"
+    message = "Only an order with issued tickets can be cancelled."

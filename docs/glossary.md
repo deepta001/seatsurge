@@ -531,3 +531,11 @@ Plain-English meanings of every technical term, with where it first appears.
 | Re-drive (re-queue) | Sending work again from the source of truth because the in-flight copy may be lost. | `REQUEUE_PENDING_ORDERS` |
 | Self-healing | A loop that notices a broken state and repairs it without a restart. | `run_consumer` re-creating its group |
 | Throwaway container | A container started for one run and removed afterwards, so nothing real is touched. | testcontainers in tests and the S5.2 demo |
+
+## Cancellation (S5.3)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| CANCELLED | Order and ticket status after a cancel; the seats are free again, the numbers stay used. | `cancel_order()` |
+| Marker key | A small Redis key that records "this was done", so a repeated step can tell and skip. | `returned:{order_id}` |
+| Forced interleaving | A test that pauses one operation at a chosen point until another catches up, so a race happens every run. | Test 13 |
