@@ -1,4 +1,4 @@
-"""Shared helpers for outbox relay tests: a session factory fixture and row builders."""
+"""Shared helpers for the order pipeline: outbox rows, and running relay + consumer once."""
 
 import json
 from collections.abc import AsyncIterator
@@ -11,6 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.db.session import create_session_factory
 from app.redis.keys import ORDERS_STREAM_KEY
+from app.worker.consumer import consume_batch, ensure_group
+from app.worker.handlers import build_handlers
+from app.worker.relay import relay_batch
 from tests.sales import stream_messages
 
 INSERT_ROW = text(
@@ -72,3 +75,15 @@ async def statuses(engine: AsyncEngine) -> dict[int, str]:
 
 async def published_ids(redis: Redis) -> list[int]:
     return [int(m["outbox_id"]) for m in await stream_messages(redis, ORDERS_STREAM_KEY)]
+
+
+async def run_pipeline(sessions: async_sessionmaker[AsyncSession], redis: Redis) -> int:
+    """One relay pass, then one consumer pass with the real handlers. Returns how many were acked.
+
+    What the worker process does in its loops, run once, so tests stay
+    deterministic.
+    """
+    await relay_batch(sessions, redis)
+    await ensure_group(redis)
+    handlers = build_handlers(sessions, redis)
+    return await consume_batch(redis, handlers, consumer="test-worker", count=100, block_ms=None)

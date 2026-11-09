@@ -39,6 +39,7 @@ checked. The teach-back for all of them happens at the end.
 - S4.2 Relay retries, backoff and the DEAD state (test 8): built, not checked.
 - S4.3 Redis Streams primer; a consumer-group reader: built, not checked.
 - S4.4 Idempotent processing (test 7) and the process-twice demo: built, not checked.
+- S4.5 Ticket issuing with the DB backstop (test 4) and the unique-constraint demo: built, not checked.
 
 ## Shaky topics
 
@@ -1394,5 +1395,76 @@ vs `$`.
 transaction as the work, `ON CONFLICT DO NOTHING`, how a unique key makes
 concurrent duplicates wait for each other, choosing the right
 de-duplication key.
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S4.5: Ticket issuing with the DB backstop; test 4 and the "no unique constraint" demo (2026-11-09)
+
+**What was built:**
+- `app/services/tickets.py`, `issue_tickets`:
+  - locks the order row; acts only if it is PENDING;
+  - runs **one** conditional `UPDATE tiers SET sold = sold + q,
+    next_number = next_number + q WHERE id = :tier AND sold + q <= capacity
+    RETURNING next_number`;
+  - inserts tickets numbered `next_number - q + 1 .. next_number` and marks
+    the order CONFIRMED.
+  - **0 rows updated** raises `InvariantViolation` (a new `PermanentError`
+    subclass in `app/core/job_errors.py`).
+- `app/redis/lua/finish_hold.lua` plus `FinishHoldScript`: after the commit,
+  CONFIRMING -> CONSUMED, the user's held count goes down, the hold leaves
+  `holds:confirming`, and its seats are **not** returned (they're sold).
+  Idempotent.
+- `run_once(..., after_commit=...)`: the Redis step runs after the commit,
+  **and** again when a duplicate is skipped, so a crash between the commit
+  and the Redis step is finished by the redelivery.
+- `app/worker/handlers.py` (`build_handlers`); `app/worker/main.py` now
+  starts the consumer as its third task.
+- Tests:
+  - adversarial test 4 (4 tests);
+  - `tests/integration/test_issue_tickets.py` (6);
+  - test 7 extended to real tickets;
+  - `run_pipeline()` added to `tests/outbox.py`.
+- `learning/examples/s4_5/unique_constraint_demo.py`.
+
+**Ran it:**
+- 231/231 tests passed; ruff and mypy are clean.
+- Test 4: 60 single-seat orders on 50 seats with Redis wiped gave exactly 50
+  issued and 10 `InvariantViolation`; mixed 1-4 seat orders never passed
+  capacity; a Redis counter that lied (5 free on a sold-out tier) led to a
+  hold and confirm, but the worker issued no ticket.
+- Mutation check:
+  - Removing the capacity condition from the UPDATE was caught. It also
+    showed a second layer: the `CHECK (sold <= capacity)` constraint still
+    blocked the oversell, as a raw IntegrityError instead of the typed error.
+  - Replacing RETURNING numbering with "count existing tickets + 1" was
+    **not** caught, because it isn't a bug here: the tier row lock taken by
+    the UPDATE makes issuers on one tier run one at a time. RETURNING just
+    avoids an extra query. Recorded honestly in `docs/design.md`.
+- Demo on the dev DB: 20 concurrent "max + 1" issuers stored **18 duplicate
+  ticket numbers without a unique index and 0 with one**. Its scratch table
+  was dropped.
+- Live, with the real API and worker processes:
+  - hold 201, then confirm 202 PENDING;
+  - the order was **CONFIRMED about 500 ms later**, with tickets [1, 2] and
+    tier sold/next_number (2, 2);
+  - the Redis hold was CONSUMED, the user's held count cleared, and the
+    counter stayed at 8;
+  - a re-confirm with a new key returned the same order, CONFIRMED.
+  - Only the demo's own users, event, order, rows, stream entry and keys
+    were deleted. `stream:orders` and the `order-workers` group now exist on
+    the dev stack, because the real worker created them.
+
+**Debugging moments:**
+1. The mutation that *wasn't* caught turned out to be a correct alternative
+   once the row lock is understood.
+2. A shell heredoc for these docs failed to parse again (as in S3.3) and
+   wrote nothing; the docs script was written as a file instead.
+
+**Key concepts:** conditional UPDATE as an atomic check-and-act, RETURNING,
+row locks serialising writers on one row, defence in depth (Lua, then the
+UPDATE condition, then the CHECK constraint, then the unique index),
+after-commit side effects that must be idempotent.
 
 **Understanding check:** deferred to the end of the project.

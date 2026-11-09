@@ -507,3 +507,47 @@ backstops, no hot rows) get their own sections when those parts are built.
   and "insert tickets" are not. One generic table protects every handler.
 - **Still to come:** deleting old `processed_messages` rows (they must be
   kept longer than any message can be redelivered).
+
+### Issuing tickets with database backstops (S4.5)
+- **One statement does the check and the write:**
+  `UPDATE tiers SET sold = sold + q, next_number = next_number + q
+  WHERE id = :tier AND sold + q <= capacity RETURNING next_number`.
+  - There is no "read sold, decide, write" gap for another worker to slip
+    into.
+  - 0 rows means the tier would pass capacity: `InvariantViolation`, and
+    nothing is written.
+- **Ticket numbers come from the same statement:** `next_number - q + 1 ..
+  next_number`. Cancelling (S5.3) lowers `sold` but never `next_number`, so
+  numbers are never reused.
+- **Finding from the mutation check:** the UPDATE locks the tier row until
+  commit, so issuers for one tier run one at a time anyway, and even
+  "count + 1" numbering would be correct here. RETURNING is chosen because
+  it's one statement instead of two, and correct without relying on that
+  ordering.
+- **Isn't that a hot row (rule 7)?** The lock lasts one short transaction
+  per order inside the worker, not per HTTP request. Holds and the
+  never-oversell gate live in Redis. One tier row per worker transaction is
+  the price of a database-enforced guarantee. Test 16 (S8.4) checks two
+  workers don't fight over it.
+- **Layers of defence (any one stops an oversell):**
+  1. `reserve_tier.lua` in Redis;
+  2. the conditional UPDATE;
+  3. the `CHECK (sold <= capacity)` constraint;
+  4. the `uq_tickets_issued_number` unique index (stops any code that
+     invents numbers itself; see the S4.5 demo).
+- **Facts come from the order row, not the message:** `issue_tickets` reads
+  the quantity and tier from `orders`; the message only carries the order
+  id (rule 1).
+- **Redis after the commit (rule 6):** `finish_hold.lua` (CONFIRMING ->
+  CONSUMED, lowers the user's held count, leaves `holds:confirming`, does
+  not return seats) runs after the commit. If the worker dies between the
+  commit and this step, the message isn't acked; its redelivery is skipped
+  as a duplicate, but the after-commit step runs again and finishes the
+  job. That's why `run_once` runs `after_commit` for duplicates too, and
+  why the script is idempotent.
+- **A short window that undersells, never oversells:** between the commit
+  and `finish_hold`, a rebuild counts the seats both as sold (DB) and as a
+  CONFIRMING hold, so availability is briefly too low.
+- **When the backstop fires today,** the message stays pending and the
+  order PENDING. S4.6 turns that into FAILED, releases the hold and counts
+  `invariant_violations_total`.

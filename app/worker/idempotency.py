@@ -40,24 +40,38 @@ async def claim_message(session: AsyncSession, message_id: int) -> bool:
     return inserted is not None
 
 
-def run_once(session_factory: async_sessionmaker[AsyncSession], handler: DbHandler) -> Handler:
+def run_once(
+    session_factory: async_sessionmaker[AsyncSession],
+    handler: DbHandler,
+    *,
+    after_commit: Handler | None = None,
+) -> Handler:
     """Wrap a database handler so each outbox message is acted on exactly once.
 
     One transaction: claim the message id, then do the work. If the work
     fails, the claim rolls back with it, so a redelivery tries again. A
     duplicate returns normally, so the consumer acks it and it's gone.
+
+    `after_commit` is for follow-up work outside Postgres (Redis), which must
+    only happen once the commit succeeded (rule 6). It runs after the first
+    processing AND for duplicates: if the worker crashed between the commit
+    and this step, the redelivered duplicate finishes the job. So it must be
+    idempotent itself.
     """
 
     async def handle(message: StreamMessage) -> None:
         async with session_factory() as session, session.begin():
-            if not await claim_message(session, message.outbox_id):
-                logger.info(
-                    "consumer: outbox message %s already processed; skipping duplicate %s",
-                    message.outbox_id,
-                    message.entry_id,
-                )
-                return
-            await handler(session, message)
+            first_time = await claim_message(session, message.outbox_id)
+            if first_time:
+                await handler(session, message)
         # Leaving `begin()` committed the claim and the work together.
+        if not first_time:
+            logger.info(
+                "consumer: outbox message %s already processed; skipping duplicate %s",
+                message.outbox_id,
+                message.entry_id,
+            )
+        if after_commit is not None:
+            await after_commit(message)
 
     return handle

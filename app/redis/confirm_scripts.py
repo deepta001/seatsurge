@@ -1,15 +1,16 @@
-"""Python wrappers for the confirm-time Lua scripts: consume_hold.lua and revert_hold.lua."""
+"""Python wrappers for the confirm-time Lua scripts: consume, revert and finish a hold."""
 
 import enum
 from dataclasses import dataclass
 
 from redis.asyncio import Redis
 
-from app.redis.keys import HOLDS_CONFIRMING_KEY, HOLDS_EXPIRY_KEY, hold_key
+from app.redis.keys import HOLDS_CONFIRMING_KEY, HOLDS_EXPIRY_KEY, hold_key, user_hold_key
 from app.redis.scripts import LUA_DIR
 
 CONSUME_HOLD_LUA = (LUA_DIR / "consume_hold.lua").read_text()
 REVERT_HOLD_LUA = (LUA_DIR / "revert_hold.lua").read_text()
+FINISH_HOLD_LUA = (LUA_DIR / "finish_hold.lua").read_text()
 
 
 class ConsumeOutcome(enum.Enum):
@@ -61,3 +62,24 @@ class RevertHoldScript:
             keys=[hold_key(hold_id), HOLDS_EXPIRY_KEY, HOLDS_CONFIRMING_KEY], args=[hold_id]
         )
         return int(result) == 1
+
+
+class FinishOutcome(enum.Enum):
+    FINISHED = 1
+    NOT_CONFIRMING = 0
+    NOT_FOUND = -1
+    KEY_MISMATCH = -4
+
+
+class FinishHoldScript:
+    """CONFIRMING -> CONSUMED once tickets are issued. Safe to run any number of times."""
+
+    def __init__(self, redis: Redis) -> None:
+        self._script = redis.register_script(FINISH_HOLD_LUA)
+
+    async def __call__(self, hold_id: str, *, event_id: int, user_id: int) -> FinishOutcome:
+        result = await self._script(
+            keys=[hold_key(hold_id), HOLDS_CONFIRMING_KEY, user_hold_key(event_id, user_id)],
+            args=[hold_id, str(event_id), str(user_id)],
+        )
+        return FinishOutcome(int(result))

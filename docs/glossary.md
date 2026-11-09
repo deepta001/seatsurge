@@ -480,3 +480,15 @@ Plain-English meanings of every technical term, with where it first appears.
 | De-duplication key | The value that identifies "the same message" across copies (here the outbox id). | `processed_messages.message_id` |
 | `ON CONFLICT DO NOTHING` | Postgres: if this insert would break a unique rule, insert nothing instead of raising an error. | `claim_message()` |
 | Claim | Recording "I'm handling this message" so nobody else does. | `claim_message()` |
+
+## Issuing tickets (S4.5)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| Backstop | A last safety check that catches what earlier layers missed. | The conditional UPDATE on `tiers` |
+| Conditional UPDATE | An UPDATE whose WHERE clause includes the rule (`sold + q <= capacity`), so the check and the write are one atomic step. | `TAKE_SEATS` |
+| `RETURNING` | Postgres: send back values from the rows just changed, without another query. | `next_number` |
+| Invariant | A rule that must always be true (here: sold never exceeds capacity). | `InvariantViolation` |
+| Defence in depth | Several independent layers, so one failing doesn't cause damage. | Lua, then UPDATE, then CHECK, then unique index |
+| After-commit step | Work outside the database done only once the commit succeeded. | `finish_hold.lua`, `after_commit` |
+| CONSUMED | Final hold status: its seats became tickets. | `finish_hold.lua` |

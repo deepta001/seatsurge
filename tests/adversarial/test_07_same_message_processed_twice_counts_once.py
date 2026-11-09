@@ -1,23 +1,25 @@
 """Adversarial test 7: the worker gets the same stream message twice; the work happens once.
 
-Ticket issuing arrives in S4.5, so the handler here does the database write
-that S4.5 builds on: adding the order's quantity to the tier's `sold`
-counter. Run twice, it would count the seats twice. S4.5 extends this test
-to real tickets.
+The first tests use a small handler that adds the order's quantity to the
+tier's `sold` counter (run twice, it would count the seats twice). The last
+one runs the real ticket-issuing pipeline (S4.5).
 """
 
 import asyncio
 import json
 
 import pytest
+from httpx import AsyncClient
 from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.redis.keys import ORDERS_STREAM_KEY
+from app.services.payments import MockPaymentProvider
 from app.worker.consumer import StreamMessage, consume_batch, ensure_group
 from app.worker.idempotency import run_once
-from tests.sales import Sale
+from tests.outbox import run_pipeline
+from tests.sales import Sale, confirm, hold, stream_messages
 
 
 async def publish(redis: Redis, outbox_id: int, sale: Sale, quantity: int) -> None:
@@ -136,3 +138,27 @@ async def test_if_the_work_fails_the_claim_rolls_back_too(
     assert await consume_batch(redis, handlers, consumer="w1", block_ms=None) == 1
     assert await sold(db_engine, sale) == 2
     assert await processed_ids(db_engine) == [7]
+
+
+async def test_a_duplicate_order_message_issues_its_tickets_once(
+    client: AsyncClient,
+    sale: Sale,
+    buyers: list[int],
+    payments: MockPaymentProvider,
+    redis: Redis,
+    db_engine: AsyncEngine,
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    held = await hold(client, sale, user_id=buyers[0], quantity=3)
+    assert (await confirm(client, held.json()["hold_id"], buyers[0])).status_code == 202
+    await run_pipeline(sessions, redis)
+
+    # The relay publishes the same outbox row again (it crashed before marking it).
+    [fields] = await stream_messages(redis, ORDERS_STREAM_KEY)
+    await redis.xadd(ORDERS_STREAM_KEY, fields)  # type: ignore[arg-type]
+    assert await run_pipeline(sessions, redis) == 1  # handled (skipped) and acked
+
+    async with db_engine.connect() as conn:
+        tickets = await conn.scalar(text("SELECT count(*) FROM tickets"))
+    assert tickets == 3  # not 6
+    assert await sold(db_engine, sale) == 3
