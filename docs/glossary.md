@@ -459,3 +459,15 @@ Plain-English meanings of every technical term, with where it first appears.
 | DEAD (dead letter) | A message given up on after too many failures, kept for a human to look at. | `outbox_events.status` |
 | Poison message | A message that fails every time it's processed; without care it blocks or loops forever. | Test 8 |
 | Retention | How long finished records are kept before deletion (here 24 h for PUBLISHED rows). | `delete_old_published()` |
+
+## Redis Streams (S4.3)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| Consumer group | A named reader of a stream that remembers its position and hands each entry to exactly one of its members. | `order-workers` |
+| Consumer | One member of a group (here, one worker process, named hostname-pid). | `consumer_name()` |
+| `XREADGROUP` | Read entries as a group member; `>` means "ones nobody in the group has had yet". | `read_new_entries()` |
+| `XACK` | Tell the group an entry is done, removing it from the pending list. | `consume_batch()` |
+| Pending entries list (PEL) | Entries handed out but not yet acknowledged, with who has them. | `XPENDING`, S4.6 retries |
+| `MKSTREAM` | Create the stream when creating the group, if it doesn't exist yet. | `ensure_group()` |
+| Blocking read | Redis holds the request open until data arrives or a timeout passes. | `BLOCK 1000` |

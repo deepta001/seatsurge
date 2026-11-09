@@ -454,3 +454,28 @@ backstops, no hot rows) get their own sections when those parts are built.
 - **Clean-up:** PUBLISHED rows older than 24 h are deleted, at most 1,000 per
   call, once a minute, so the table stays small and the relay's queries stay
   fast. PENDING and DEAD rows are never deleted.
+
+### The stream consumer (S4.3)
+- **Redis Streams with a consumer group, not pub/sub:** a stream keeps
+  messages until they're processed, even if no worker is running. Pub/sub
+  drops them. The group `order-workers` gives each message to exactly one
+  worker, so more worker processes means more throughput without
+  double-processing.
+- **The group starts at id `0`:** messages the relay published before any
+  worker existed are still delivered. `$` would silently skip them.
+- **Ack only after the handler succeeded:** if a worker crashes mid-message,
+  the message stays in the pending entries list (PEL) and can be retried.
+  Acking first would lose it. Together with the relay this is
+  at-least-once delivery, so the handler must be idempotent (S4.4).
+- **A failed message stays pending and doesn't stop the batch.** Picking
+  pending messages back up (`XAUTOCLAIM`), counting deliveries and
+  dead-lettering are S4.6.
+- **Blocking reads:** `XREADGROUP ... BLOCK 1000` waits inside Redis for up
+  to 1 s, so an idle worker isn't polling in a tight loop and a new
+  message is handled within milliseconds.
+- **The consumer name is hostname-pid,** so XPENDING shows exactly which
+  process holds a stuck message.
+- **Not wired into the worker yet:** it joins in S4.5, when the ticket
+  handler exists. Running it earlier would have nothing real to do.
+- **Still to come:** trimming the stream (`XTRIM`) once entries are acked,
+  and the `processed_messages` de-duplication (S4.4).

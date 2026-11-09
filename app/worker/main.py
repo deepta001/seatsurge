@@ -1,7 +1,9 @@
 """The worker process: background jobs that run beside the API (CLAUDE.md section 3).
 
 It runs two asyncio tasks side by side: the hold sweeper and the outbox
-relay. The stream consumer joins them in S4.3. Run from the project root:
+relay. The stream consumer (app/worker/consumer.py) joins them in S4.5, once
+its ticket-issuing handler exists; until then published messages wait
+safely in the stream. Run from the project root:
 
     uv run python -m app.worker.main
 """

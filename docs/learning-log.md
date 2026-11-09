@@ -37,6 +37,7 @@ checked. The teach-back for all of them happens at the end.
 - S3.3 consume_hold.lua and POST /holds/{id}/confirm (tests 2, 3): built, not checked.
 - S4.1 Outbox primer and a basic relay using SKIP LOCKED: built, not checked.
 - S4.2 Relay retries, backoff and the DEAD state (test 8): built, not checked.
+- S4.3 Redis Streams primer; a consumer-group reader: built, not checked.
 
 ## Shaky topics
 
@@ -1293,5 +1294,57 @@ log, batch-and-loop background tasks.
 **Key concepts:** retryable vs permanent failures, exponential backoff, a
 dead-letter state, not counting infrastructure outages against messages,
 keeping a log table small.
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S4.3: Redis Streams primer; XADD; a worker reading with a consumer group (2026-11-09)
+
+**What was built:**
+- `learning/15-redis-streams.md`, the primer, plus
+  `learning/examples/s4_3/stream_demo.py` (two consumers, one entry left
+  unacked).
+- `app/worker/consumer.py`:
+  - `StreamMessage` and `parse_message`; malformed fields raise
+    `PermanentError`.
+  - `ensure_group`: `XGROUP CREATE ... 0 MKSTREAM`. If another worker
+    created the group first, it checks with `XINFO GROUPS` instead of
+    matching the error text.
+  - `consume_batch`: `XREADGROUP >`, then a handler per message type; XACK
+    only after the handler succeeds; a failure stays pending and the rest of
+    the batch continues.
+  - `run_consumer`, the loop.
+- **Deliberately not started by the worker yet:** it joins in S4.5 with the
+  ticket handler, so it never runs with nothing real to do. The group starts
+  at id 0, so nothing published in the meantime is missed.
+- Tests: `tests/unit/test_stream_message.py` (5) and
+  `tests/integration/test_stream_consumer.py` (7).
+
+**Ran it:**
+- 217/217 tests passed; ruff and mypy are clean.
+- Mutation check, with three broken consumers, each caught:
+  1. the group created at `$` (misses earlier messages);
+  2. XACK before handling;
+  3. one failure stopping the batch.
+- The demo on the dev stack: worker-a got orders 1-2 and worker-b got 3-4;
+  order-4 was never acked, so XPENDING showed 1 pending for worker-b, and
+  `>` handed out nothing more.
+- End to end on the dev stack: a demo outbox row went through the relay to
+  the consumer group, the handler received the parsed message, it was
+  acked, and 0 were pending. The script refused to run if `stream:orders`
+  already existed, and it deleted only its own row and the stream it
+  created.
+
+**Debugging moments:**
+1. redis-py types the `XREADGROUP` reply loosely (mypy saw `str | int`), so
+   one typed helper (`read_new_entries`) converts it into plain
+   `(entry_id, fields)` pairs.
+2. A scratch script outside the project couldn't import `app` until it was
+   run with `PYTHONPATH=.`.
+
+**Key concepts:** append-only logs, consumer groups, the pending entries
+list, ack-after-work (at-least-once), blocking reads, starting a group at 0
+vs `$`.
 
 **Understanding check:** deferred to the end of the project.
