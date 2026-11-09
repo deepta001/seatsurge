@@ -8,13 +8,18 @@ For each tier, under the same lock rehydrate uses:
    see "not initialised" and wait for the lock holder (us) to finish.
 2. Recompute it (Postgres snapshot first, then the live holds in Redis).
 3. SET the new value.
+
+It also re-queues the outbox rows of the event's still-PENDING orders, so an
+order whose stream message was lost (Redis flushed) is published again. A
+duplicate is harmless: the worker skips it (run_once), and only ever issues
+tickets for a PENDING order.
 """
 
 from dataclasses import dataclass
 
 from redis.asyncio import Redis
 from redis.exceptions import LockError
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import EventNotFound, InventoryNotReady
@@ -24,6 +29,22 @@ from app.redis.rehydrate import LOCK_SECONDS, compute_available
 
 # How long to wait if a rehydrate is holding a tier's lock right now.
 LOCK_WAIT_SECONDS = 5
+
+
+# PUBLISHED -> PENDING again, for orders that still have no tickets. Rows that
+# are PENDING already (not yet sent) or DEAD (given up on) are left alone.
+REQUEUE_PENDING_ORDERS = text(
+    """
+    UPDATE outbox_events
+       SET status = 'PENDING', next_retry_at = now(), published_at = NULL
+     WHERE type = 'order.placed'
+       AND status = 'PUBLISHED'
+       AND aggregate_id IN (
+           SELECT id::text FROM orders WHERE event_id = :event_id AND status = 'PENDING'
+       )
+    RETURNING id
+    """
+)
 
 
 @dataclass(frozen=True)
@@ -58,13 +79,20 @@ async def reconcile_tier(
     return TierReconciled(tier_id, before, after)
 
 
-async def reconcile_event(
-    session: AsyncSession, redis: Redis, event_id: int
-) -> list[TierReconciled]:
-    """Reconcile every tier of the event. Raises EventNotFound for an unknown event."""
+@dataclass(frozen=True)
+class EventReconciled:
+    tiers: list[TierReconciled]
+    requeued_orders: int  # PENDING orders whose message was sent again
+
+
+async def reconcile_event(session: AsyncSession, redis: Redis, event_id: int) -> EventReconciled:
+    """Reconcile every tier, then re-queue stuck orders. EventNotFound for an unknown event."""
     if await session.get(Event, event_id) is None:
         raise EventNotFound()
     tier_ids = (
         await session.scalars(select(Tier.id).where(Tier.event_id == event_id).order_by(Tier.id))
     ).all()
-    return [await reconcile_tier(session, redis, event_id, tier_id) for tier_id in tier_ids]
+    tiers = [await reconcile_tier(session, redis, event_id, tier_id) for tier_id in tier_ids]
+    requeued = (await session.scalars(REQUEUE_PENDING_ORDERS, {"event_id": event_id})).all()
+    await session.commit()
+    return EventReconciled(tiers, len(requeued))

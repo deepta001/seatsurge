@@ -522,3 +522,12 @@ Plain-English meanings of every technical term, with where it first appears.
 | Drift | When a cached value slowly stops matching the truth. | `before` vs `after` |
 | Snapshot | A view of the data as of one instant; one SQL statement always sees one. | `TIER_SNAPSHOT` |
 | `GETDEL` | Redis: read a key and delete it in one atomic step. | `reconcile_tier()` |
+
+## Surviving a Redis flush (S5.2)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| `FLUSHALL` / `FLUSHDB` | Redis commands that delete every key (all databases / the current one). | Test 11, the S5.2 demo |
+| Re-drive (re-queue) | Sending work again from the source of truth because the in-flight copy may be lost. | `REQUEUE_PENDING_ORDERS` |
+| Self-healing | A loop that notices a broken state and repairs it without a restart. | `run_consumer` re-creating its group |
+| Throwaway container | A container started for one run and removed afterwards, so nothing real is touched. | testcontainers in tests and the S5.2 demo |

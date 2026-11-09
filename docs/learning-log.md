@@ -43,6 +43,7 @@ checked. The teach-back for all of them happens at the end.
 - S4.6 Typed errors, retries, dead letters and inventory release (test 9): built, not checked.
 - S4.7 Relay crash test (test 10) and the kill-the-relay demo: built, not checked.
 - S5.1 Reconcile logic and the admin endpoint: built, not checked.
+- S5.2 Flushing Redis mid-sale and recovering (test 11): built, not checked.
 
 ## Shaky topics
 
@@ -1645,5 +1646,66 @@ The Phase C review was skipped (the student chose "Start S5.1").
 consistent snapshots (one statement), read order deciding which way an
 error goes, pausing writers with a missing key plus a lock, operator
 endpoints.
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S5.2: Flush Redis mid-sale and watch recovery; test 11 (2026-11-09)
+
+**What a flush breaks** (traced before coding):
+- **Handled already:** counters (rebuilt from Postgres on the next hold) and
+  holds (they vanish; their seats become free, and confirming them is a 404).
+- **Two real problems found:**
+  1. **The worker never recovered.** `run_consumer` created its consumer
+     group once. After a flush every read failed ("no such group") forever.
+     Fixed: after any failed pass it re-creates the group.
+  2. **Published-but-unprocessed orders got stuck.** Their stream messages
+     were wiped, and their outbox rows were already PUBLISHED, so they'd
+     stay PENDING forever with their seats counted as taken. Fixed:
+     reconcile re-queues the outbox rows of the event's PENDING orders
+     (PUBLISHED -> PENDING) and reports `requeued_orders`. Duplicates are
+     harmless: `run_once` skips them, and tickets are only issued for a
+     PENDING order.
+- **Not repaired (documented):** per-user held counts and idempotency keys
+  are also lost.
+
+**What was built:**
+- The two fixes above (`app/worker/consumer_loop.py`,
+  `app/services/reconcile.py`, plus `requeued_orders` on the endpoint).
+- `tests/adversarial/test_11_redis_flushed_mid_sale.py` (3 tests).
+- `learning/examples/s5_2/flush_redis_demo.py`: runs on its own throwaway
+  Postgres and Redis containers, so the real FLUSHALL harms nothing.
+
+**Ran it:**
+- 251/251 tests passed; ruff and mypy are clean; test 11 passed 3 runs in a
+  row.
+- Test 11, main scenario: A bought 6, B was PENDING with 5, and C held 4.
+  After FLUSHALL:
+  - C's confirm gave 404;
+  - a 56-request rush won **exactly 39** seats (50 - 6 - 5);
+  - B stayed PENDING until reconcile re-queued it;
+  - then everyone bought: **sold 50, 50 distinct ticket numbers, no dead
+    letters, the Redis counter 0**.
+- Mutation check: removing either fix was caught.
+- The demo (real API and worker processes, throwaway containers, 20 seats):
+  - before the flush: sold 6, counter 5;
+  - FLUSHALL: 0 keys;
+  - the worker restarted, but B stayed PENDING;
+  - C's confirm gave 404;
+  - D's hold of 3 gave 201 (counter rebuilt: 9 - 3 = 6);
+  - reconcile returned `requeued_orders: 1`;
+  - B was CONFIRMED and sold reached 11;
+  - **11 sold + 3 held + 6 available = 20.**
+
+**Debugging moments:**
+1. My first test draft read the error field as `code`; the API sends it as
+   `error` (409 `sold_out` was correct).
+2. The demo had to avoid FLUSHALL on the dev Redis (the targeted-cleanup
+   rule), so it brings its own containers.
+
+**Key concepts:** treating a cache as losable, re-driving work from the
+source of truth, self-healing loops, testing a failure you'd never want to
+cause in a shared environment.
 
 **Understanding check:** deferred to the end of the project.

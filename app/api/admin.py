@@ -21,6 +21,8 @@ class TierCounter(BaseModel):
 class ReconcileResult(BaseModel):
     event_id: int
     tiers: list[TierCounter]
+    # PENDING orders whose message was published again (e.g. lost in a Redis flush).
+    requeued_orders: int
 
 
 @router.post("/events/{event_id}/reconcile")
@@ -33,10 +35,14 @@ async def reconcile(
     """Recompute this event's Redis seat counters from Postgres and live holds.
 
     Safe during a sale: new holds pause for the moment each counter is
-    rebuilt. Shows each counter before and after, so drift is visible.
+    rebuilt. Shows each counter before and after, so drift is visible. Also
+    re-sends PENDING orders' messages, in case they were lost.
     """
-    results = await reconcile_event(session, redis, event_id)
+    result = await reconcile_event(session, redis, event_id)
     return ReconcileResult(
         event_id=event_id,
-        tiers=[TierCounter(tier_id=r.tier_id, before=r.before, after=r.after) for r in results],
+        tiers=[
+            TierCounter(tier_id=t.tier_id, before=t.before, after=t.after) for t in result.tiers
+        ],
+        requeued_orders=result.requeued_orders,
     )

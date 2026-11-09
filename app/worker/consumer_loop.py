@@ -34,4 +34,8 @@ async def run_consumer(
                 logger.info("consumer: handled %d message(s)", handled)
         except Exception:
             logger.exception("consumer: pass failed; retrying shortly")
+            # Re-check the group next time: if Redis was flushed or restarted
+            # without its data, the stream and group are gone and every read
+            # fails until they're created again (found in S5.2).
+            group_ready = False
             await asyncio.sleep(1)

@@ -637,3 +637,23 @@ relay never does that.
   may then count those seats as held: too low, safe. Running reconcile
   again corrects it.
 - **Not covered:** per-user held counts (`uhold:*`) aren't reconciled.
+
+### Surviving a Redis flush (S5.2)
+What a flush (or a restart without persistence) wipes, and how each part
+recovers:
+
+| Lost in Redis | Effect | Recovery |
+|---|---|---|
+| Inventory counters | Holds can't be checked | Rebuilt from Postgres on the next hold (rule 4) |
+| HELD holds | Those users lose their holds (confirm gives 404); the seats are free again | Nothing to do: Postgres never knew about them |
+| CONFIRMING holds | Their PENDING orders still exist in Postgres | Rebuilds count PENDING orders whose hold is gone |
+| `stream:orders` and the consumer group | Published, unprocessed orders are lost; the worker's reads fail | The worker re-creates its group after a failed pass; **reconcile re-queues the outbox rows of PENDING orders** |
+| Per-user held counts, idempotency keys | The per-user hold cap and replay protection reset | Not repaired: the confirm-time purchase cap and `uq_orders_user_id_idempotency_key` still hold in Postgres |
+
+- **Why re-queuing is safe:** a re-published order has the same `outbox_id`,
+  so if the original was in fact processed, `run_once` skips it, and
+  `issue_tickets` only acts on PENDING orders anyway. Reconcile re-queues
+  only PUBLISHED rows of PENDING orders; DEAD rows are left for a human.
+- **Edge case:** PUBLISHED rows are deleted after 24 h. An order still
+  PENDING after that has no row to re-queue. That's unlikely, because the
+  worker dead-letters long before.
