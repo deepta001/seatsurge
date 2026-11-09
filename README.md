@@ -2,201 +2,209 @@
 
 [![CI](https://github.com/deepta001/seatsurge/actions/workflows/ci.yml/badge.svg)](https://github.com/deepta001/seatsurge/actions/workflows/ci.yml)
 
-A ticket booking backend designed to stay correct when thousands of people
-try to buy the same limited seats at once.
+A ticket booking backend that stays correct when thousands of people try to
+buy the same limited seats at the same instant.
 
-> **Status: Phase A complete** (accounts and events). The never-oversell
-> booking engine (Redis holds, orders, outbox, worker) is the next phase and
-> is **not built yet**. This README only lists features that a test
-> demonstrates.
+Python 3.12, FastAPI, PostgreSQL 16, Redis 7 (Lua scripts, Streams,
+pub/sub), SQLAlchemy 2 async, Alembic, Docker Compose with nginx in front of
+three API replicas, Prometheus and Grafana, structured JSON logs.
 
-## What works today
+> **Status:** complete through the hardening phase (CLAUDE.md phases 0 to E).
+> The stretch goals (virtual waiting room, OpenTelemetry tracing) are not
+> built. This README lists only what a test or a recorded run demonstrates.
 
-| Feature | Endpoints | Proven by |
-|---|---|---|
-| Health checks | `GET /health/live`, `GET /health/ready` (503 if Postgres or Redis is down) | `tests/unit/test_health.py` |
-| Sign-up, always as `USER`; argon2 password hashes; duplicates are a 409 decided by DB UNIQUE constraints | `POST /auth/register` | `tests/integration/test_register.py`, adversarial test 15 |
-| Login with 15-minute HS256 JWT access tokens; identical 401 for "wrong password" and "no such email" | `POST /auth/login`, `GET /me` | `tests/unit/test_tokens.py`, `tests/integration/test_login.py` |
-| Auth on protected routes reads the token only (no DB query) | `GET /me` | `tests/unit/test_me.py` (passes with the DB unreachable) |
-| Rotating single-use refresh tokens, stored as SHA-256 hashes, with reuse detection that revokes the whole login family; real logout | `POST /auth/refresh`, `POST /auth/logout` | `tests/integration/test_refresh.py` |
-| Admins created only from the CLI (no default credentials) | `scripts/seed_admin.py` | `tests/unit/test_seed_admin.py` |
-| Admin event management: create with tiers, one-way status DRAFT -> PUBLISHED -> CANCELLED, delete drafts only; 403 for non-admins | `POST/PATCH/DELETE /events` | `tests/integration/test_events_admin.py` |
-| Public browsing: upcoming published events, name search (wildcards escaped), city filter, capped paging; drafts are 404 | `GET /events`, `GET /events/{id}` | `tests/integration/test_events_public.py` |
-| Database rules as the source of truth: `0 <= sold <= capacity`, unique tier names, role and status CHECKs | Alembic migrations | `tests/unit/test_models.py`, CI migration checks |
-| **Confirm (Phase C, in progress):** pay for your hold (mock payment tokens) and get a PENDING order; the order and its outbox row are written in one transaction; quantity comes from the hold and price from the database; forged or foreign holds get 404; on any failure the hold is given back and a payment is refunded; per-user purchase cap of 10 per event | `POST /holds/{id}/confirm` | `tests/integration/test_confirm_api.py`, adversarial tests 2 and 3 |
-| **Outbox relay (Phase C, in progress):** the worker publishes committed outbox rows to the `stream:orders` Redis Stream, oldest first; several relays at once never publish a row twice (`FOR UPDATE SKIP LOCKED`); one failing row doesn't block the rest (it backs off 1 s, 2 s, 4 s ... and goes DEAD after 8 attempts, or at once if it can never be published; a Redis outage costs no attempts); published rows are deleted after 24 h. Tickets are not issued yet | `python -m app.worker.main` | `tests/integration/test_outbox_relay.py`, adversarial test 8 |
-| **Stream consumer (Phase C, in progress; ):** reads `stream:orders` as the consumer group `order-workers`, so each message goes to one worker; acks only after its handler succeeds; failures stay pending without blocking the batch; nothing published before the group existed is missed | `app/worker/consumer.py` | `tests/integration/test_stream_consumer.py` |
-| **Duplicates are harmless (test 7):** each message's outbox id is recorded in `processed_messages` in the same transaction as the handler's work, so a duplicate (even arriving at two workers at once) is skipped, and a failed attempt leaves nothing behind | `app/worker/idempotency.py` | adversarial test 7 |
-| **Tickets are issued (Phase C):** the worker turns each PENDING order into numbered tickets and marks it CONFIRMED (about 0.5 s after confirm in a live run); one conditional `UPDATE ... WHERE sold + q <= capacity RETURNING next_number` means even with Redis wiped or wrong no more tickets than seats are issued (60 orders on 50 seats: exactly 50); the Redis hold becomes CONSUMED after the commit | `python -m app.worker.main` | adversarial test 4, `tests/integration/test_issue_tickets.py` |
-| **Failures never leak seats (test 9):** failed messages are retried with backoff (1 s, 2 s, 4 s ...); a crashed worker's messages are taken over by another; after 5 failed deliveries, or at once when retrying can't help (e.g. the database backstop refused), the message goes to `stream:orders:dead`, the order becomes FAILED and its seats go back on sale; an order that already has tickets is never released | `python -m app.worker.main` | adversarial tests 9 and 4 |
-| **Relay crashes lose nothing (test 10):** an order committed while the relay is down, or a relay killed right after publishing (before marking the row), or one whose database connection dies while holding row locks: in every case the order is delivered and gets its tickets exactly once | outbox relay | adversarial test 10 |
-| **Reconcile (Phase D):** an admin rebuilds an event's Redis seat counters from Postgres and live holds, fixing drift (shows before and after); holds pause briefly while each counter is rebuilt, so reconciling mid-sale never oversells | `POST /admin/events/{id}/reconcile` | `tests/integration/test_reconcile.py` |
-| **Redis flushed mid-sale (test 11):** no oversell (counters rebuilt from Postgres: 56 rush requests won exactly the 39 seats really left); the worker re-creates its consumer group by itself; reconcile re-sends PENDING orders whose messages were wiped; the sale then completes with exactly 50 tickets for 50 seats | Redis flush recovery | adversarial test 11 |
-| **Cancel (test 13):** cancel your confirmed order; tickets and order become CANCELLED and `sold` drops in one transaction; the worker then puts the seats back on sale exactly once; ticket numbers are never reused (a re-buy gets new numbers); repeated or simultaneous cancels change nothing | `POST /orders/{id}/cancel` | adversarial test 13 |
-| **Reserved seating, data and seat map (Phase D, in progress):** a reserved-seating event gets one labelled seat per unit of capacity (at most 5,000); the public seat map shows each seat as AVAILABLE, HELD or SOLD, compact by default, with labels on request. Holding and buying specific seats: see below | `GET /events/{id}/seats` | `tests/integration/test_seat_map.py` |
-| **Holding specific seats (Phase D, in progress):** choose up to 10 seats in one tier; all are held or none (`seat_taken`), even with 60 buyers racing for 8 seats; a sold seat is never held again, even after Redis forgets which seats are sold; cancel and expiry free the seats. Then confirm buys them like any hold | `POST /events/{id}/holds` with `seat_ids` | `tests/integration/test_seat_holds.py` |
-| **Buying reserved seats:** confirmed seat holds become one ticket per seat; a seat can never get two live tickets (Postgres partial unique index), even if Redis let two orders through; cancelling puts the seats back on sale (new ticket numbers next time); seats of PENDING orders stay protected after a Redis flush; a failed order frees its seats but never a seat someone else bought | confirm, cancel, worker | `tests/integration/test_seat_purchase.py` |
-| **Seats never sold twice (test 4b):** 40 buyers racing for 12 seats through hold, confirm and the worker: no seat with two live tickets, and Redis, Postgres and the seat map agree; with Redis wiped, 20 orders for one seat give exactly 1 ticket; an expired hold's seat goes to the next buyer only | reserved seating | adversarial test 4b |
-| **Rate limiting (test 14):** holds 20 per user and logins 5 per email and 20 per IP, per sliding 60 s window (configurable); 429 with Retry-After; atomic (40 simultaneous requests at a limit of 10 let exactly 10 through); login keeps working if Redis is down | holds, `POST /auth/login` | adversarial test 14 |
-| **Security checklist (S7.2):** every section-9 item audited in `docs/security-checklist.md`; CORS allowlist; refuses to start with placeholder secrets; errors never echo input or internals (500s carry a correlation id); API docs off in production; the route list is pinned so no debug endpoint can slip in | all routes | `tests/integration/test_security_hardening.py` |
-| **Live availability (S7.3):** SSE stream per event, fed by the worker through Redis pub/sub (so any API process can serve it; multi-replica is checked in S8.1); changes coalesced to at most 5 updates/s per event, each a fresh snapshot; one Redis subscription per process; an open stream holds no DB connection | `GET /events/{id}/stream` | `tests/integration/test_live_updates.py` |
-| **Three replicas behind nginx (S8.1):** one image for api and worker, non-root containers; migrations run once before anything starts; nginx round robin (9 requests -> 3/3/3; 1,000 buyers -> 334/334/333 with exactly 100 holds and 0 oversold); live updates reach viewers on every replica; clients can't fake their IP past the per-IP login limit; `/metrics` not routed | `docker compose up`, port 8080 | `tests/unit/test_deploy_config.py` + `learning/examples/s8_1/` (live checks) |
-| **Metrics and dashboard (S8.2):** Prometheus scrapes every api replica and the worker: request latency by route template, holds created/rejected by reason, orders placed/confirmed/failed (counted once, after commit), dead letters, hold expiries, outbox and stream backlog, Redis script latency, and `invariant_violations_total`, which every test asserts stays 0 unless it trips a backstop on purpose. Grafana dashboard provisioned from `deploy/grafana/`; both bound to 127.0.0.1, Grafana password from `.env`; `/metrics` not routed by nginx | Prometheus :9090, Grafana :3000 | `tests/integration/test_metrics.py` + the autouse guard in `tests/conftest.py` |
-| **Structured logs, traceable end to end (S8.2b):** one JSON object per log line; every request gets a correlation id (nginx's `$request_id`, or a fresh one; unsafe incoming ids are replaced), returned in `X-Correlation-ID`, written on every log line and access line, stored on the outbox row, and carried through the stream to the worker's log lines | all routes, relay, worker | `tests/integration/test_correlation.py`, `tests/unit/test_log_setup.py`; live: `learning/examples/s8_2b/trace_a_purchase.py` |
-| **Load test + consistency check (S8.3):** Locust, 1,000 buyers on 100 seats through nginx and 3 api replicas, each holding then confirming once: 3 runs, each exactly 100 holds / 900 sold out / 100 orders / 100 tickets, 0 failed requests, 0 oversold; `scripts/verify_consistency.py` then confirmed Postgres and Redis agree (exit 0). Latency numbers and machine specs go in `docs/benchmarks.md` (S8.5) | `make load`, `make verify` | `loadtest/`, `scripts/verify_consistency.py`, `tests/integration/test_verify_consistency.py` |
-| **Chaos runs (S8.4), the full headline test:** 1,000 buyers on 100 seats through nginx and 3 replicas while (a) the worker is SIGKILLed mid-stream (34 orders waiting, restarted 5 s later), (b) Redis is FLUSHALLed mid-sale (88 orders placed; reconcile re-queued 46 lost messages), (c) two workers share the work (46 / 54 orders). Each: exactly 100 tickets, 0 oversold, 0 failed requests, `verify_consistency` CONSISTENT. Run on a throwaway copy of the stack | `loadtest/chaos.py` | `loadtest/chaos.py` runs + adversarial test 16 |
-| **Benchmarks (S8.5):** 5 measured runs with machine specs, client and server latency, throughput, and a diagnosis of where the time goes (CPU per replica; laptop saturated), in `docs/benchmarks.md` | `loadtest/benchmark.py` | `loadtest/results/benchmark-*.json` (local) |
-| **Never oversell (test 1):** 500 concurrent HTTP buyers wanting 1-4 seats on 50 seats never take more than 50 (also with the counter rebuilt mid-rush); the test fails if the atomic script is swapped for naive check-then-take. A demo with 3 API processes on the dev stack: 1,000 buyers / 100 seats gave exactly 100 holds | `POST /events/{id}/holds` | `tests/concurrency/test_01_concurrent_holds_never_oversell.py` |
-| **Holds:** reserve 1-10 seats for 5 minutes via one atomic Redis Lua script; 409 sold_out or hold_limit_exceeded (10 per user per event); a missing counter is a 503, never zero. 300 simultaneous HTTP requests on 50 seats give exactly 50 holds | `POST /events/{id}/holds` | `tests/integration/test_holds_api.py`, `tests/integration/test_reserve_tier.py` |
-| A missing Redis counter is rebuilt from Postgres + active holds (one rebuild at a time, even for 50 simultaneous requests), never treated as zero; 503 only if the rebuild can't finish | automatic in `POST /events/{id}/holds` | adversarial test 12 |
-| Releasing: a user can cancel their own hold; a worker sweeper returns expired holds' seats (within about 1 s of expiry); every release is idempotent (never returns seats twice, even when racing) | `DELETE /holds/{id}`, `python -m app.worker.main` | adversarial test 5, `tests/integration/test_release_hold.py`, `tests/integration/test_cancel_hold_api.py` |
-| Limits: 1-10 seats per hold; at most 10 held per user per event, even with many simultaneous requests; request bodies over 16 KB get 413 before being read | middleware + `reserve_tier.lua` | `tests/concurrency/test_user_hold_cap.py`, `tests/unit/test_body_limit.py` |
-| Safe retries: a required `Idempotency-Key`; the same key replays the first answer (one hold, even for 10 simultaneous retries); the same key with a different body is a 422 | `Idempotency-Key` header | adversarial test 6 |
+## Results (measured; details in [`docs/benchmarks.md`](docs/benchmarks.md))
 
-The 305 tests (55 unit, 172 integration, 7 concurrency, 71 adversarial) run
-against a real Postgres 16 and Redis 7 started by testcontainers. CI also applies every migration to an
-empty database, runs `alembic check` for model drift, and proves the
-downgrade path.
-
-## Results (measured; details in `docs/benchmarks.md`)
-
-1,000 buyers competing for 100 seats at the same instant, through nginx and
-3 api replicas, on one laptop (Intel Core Ultra 5 226V, 8 cores, Docker
+1,000 buyers compete for 100 seats at the same instant, through nginx and 3
+API replicas, on one laptop (Intel Core Ultra 5 226V, 8 cores, Docker
 Desktop; the load generator on the same machine). Median of 5 runs:
 
 | | |
 |---|---|
-| Tickets issued / oversold | 100 / **0** in every run (also with the worker killed or Redis flushed mid-sale) |
+| Tickets issued / oversold | 100 / **0** in every run |
+| ... with the worker SIGKILLed, or Redis FLUSHALLed, mid-sale | 100 / **0**, Postgres and Redis consistent afterwards |
 | Failed requests | 0 |
-| Postgres and Redis agree afterwards | yes, every run (`verify_consistency`) |
+| Postgres and Redis agree afterwards | yes, every run (`scripts/verify_consistency.py`) |
 | Hold latency, client side, p50 / p95 / p99 | 2.2 s / 2.9 s / 3.0 s |
 | Throughput during the burst | ~356 requests/s (all 1,100 requests in ~3.1 s) |
 
 The latency is queueing, not work: Redis runs each atomic script in ~52 us,
-while each replica's single Python process and the laptop as a whole are
-CPU-saturated during the burst. These are not capacity figures; see the
-benchmark notes.
+but each replica is one Python process at 100% of a core during the burst,
+and the laptop as a whole is at 85 to 92% CPU. These are correctness results
+under load, not capacity figures.
 
-## Architecture so far (Phase A)
-
-```mermaid
-flowchart LR
-    client[Client] -->|HTTP + Bearer JWT| api[FastAPI app]
-    api -->|SQLAlchemy async| pg[(Postgres 16<br/>users, events, tiers,<br/>refresh_tokens)]
-    api -.->|readiness ping only| redis[(Redis 7)]
-    cli[seed_admin CLI] --> pg
-    alembic[Alembic migrations] --> pg
-```
-
-## Where it's going (the full design)
+## How it works
 
 ```
-client -> nginx -> api (x3) --Lua--> Redis (holds, counters)
+client -> nginx -> api (x3) --Lua--> Redis (holds, counters, idempotency, rate limits)
                       |
-                      +--txn--> Postgres (orders + outbox_events)
-                                     |
-                         relay (SKIP LOCKED) --XADD--> Redis Stream
-                                                           |
-                                         worker (consumer group, idempotent)
-                                                           |
-                       Postgres (tickets, tier sold counters) + pub/sub -> SSE
+                      +--one txn--> Postgres (orders + outbox_events)
+                                          |
+                          relay (FOR UPDATE SKIP LOCKED) --XADD--> Redis Stream
+                                                                       |
+                                              worker (consumer group, idempotent)
+                                                                       |
+                      Postgres (tickets, tier counters) + pub/sub -> SSE live updates
 ```
 
-Redis will be the fast gate (atomic Lua scripts, expiring holds); Postgres
-stays the source of truth, with constraints that make overselling impossible
-even if Redis is wrong. See `docs/design.md` for every decision and its
-trade-offs, and `docs/failure-modes.md` for each failure and the test that
-covers it.
+1. **Hold.** `POST /events/{id}/holds` runs one Lua script in Redis that
+   checks and takes seats atomically (all or nothing, also for chosen
+   seats), records a hold that expires in 5 minutes, and enforces a
+   per-user cap. A missing counter is rebuilt from Postgres under a lock,
+   never read as zero.
+2. **Confirm.** `POST /holds/{id}/confirm` takes only the hold id: seats,
+   quantity and price come from the server. One Postgres transaction writes
+   a PENDING order and an outbox row. Answer: 202.
+3. **Relay.** A worker task moves committed outbox rows to a Redis Stream,
+   each row in its own try/except, with backoff and a DEAD state.
+4. **Issue.** The worker reads the stream as a consumer group, handles each
+   message once (`processed_messages` in the same transaction), issues
+   numbered tickets with a conditional `UPDATE tiers ... WHERE sold + q <=
+   capacity`, and acks only after the commit. Failures retry with backoff,
+   then go to a dead-letter stream and give the seats back.
+5. **Expire, cancel, recover.** A sweeper returns abandoned holds' seats;
+   cancellation goes through the outbox too; an admin reconcile rebuilds
+   Redis from Postgres after a Redis loss.
+6. **Watch.** `GET /events/{id}/stream` (Server-Sent Events) shows live
+   availability, at most 5 updates a second per event, on any replica.
 
-## Run it locally
+### Why it can't oversell
+
+- **The fast gate is atomic:** every inventory change is one Lua script, so
+  "check, then take" can't interleave between requests.
+- **The database is the backstop:** `sold <= capacity` is a CHECK, issuing is
+  a conditional UPDATE, and a seat can have only one live ticket (partial
+  unique index). Even with Redis wrong or wiped, Postgres refuses to oversell;
+  `invariant_violations_total` counts any time it had to.
+- **Nothing is lost between the two:** the outbox makes "order written" and
+  "order will be processed" one commit; the stream is at-least-once and every
+  consumer is idempotent.
+
+Each decision, the alternative and the trade-off are in
+[`docs/design.md`](docs/design.md); each failure and the test that covers it
+in [`docs/failure-modes.md`](docs/failure-modes.md).
+
+## What's built (and what proves it)
+
+| Area | What it does | Proven by |
+|---|---|---|
+| Accounts | Self-registration is always `USER` (admins only from a CLI); argon2 hashes; 15-min JWT access tokens; rotating single-use refresh tokens with reuse detection; auth on requests reads only the token | adversarial test 15, `tests/integration/test_refresh.py`, `tests/unit/test_me.py` |
+| Events | Admin CRUD with tiers (general admission or reserved seats); one-way DRAFT -> PUBLISHED -> CANCELLED; public listing with search, city filter and paging; seat map | `tests/integration/test_events_admin.py`, `test_events_public.py`, `test_seat_map.py` |
+| Never oversell | 500 concurrent HTTP buyers on 50 seats, 1-4 seats each, never exceed 50; fails if the Lua script is swapped for naive check-then-take | test 1 (`tests/concurrency/`) |
+| Holds | Atomic Lua reserve (tier or specific seats, all or nothing); 5-min TTL; per-user cap; missing counter rebuilt, never zero; idempotent release; sweeper | tests 5, 6, 12, `test_seat_holds.py` |
+| Confirm | Takes only a hold id; forged or foreign holds get nothing; client-sent seats/quantities ignored; order + outbox row in one transaction; per-user purchase cap | tests 2, 3, `test_confirm_api.py` |
+| Pipeline | Outbox relay with SKIP LOCKED, backoff, DEAD state; consumer group; idempotent handling; retries, dead letters, seats released for failed orders | tests 7, 8, 9, 10, 16 |
+| Backstops | Conditional UPDATE and unique indexes refuse an oversell or a double-sold seat even with Redis wiped | tests 4, 4b |
+| Recovery | Redis flushed mid-sale: no oversell, consumer group recreated, reconcile re-queues lost orders | test 11, chaos runs |
+| Cancel | Through the outbox; seats back once; ticket numbers never reused | test 13 |
+| Protection | Sliding-window rate limits (holds per user; logins per email and per IP), 429 + Retry-After; CORS allowlist; no default secrets; errors never leak internals; non-root containers; real client IP behind nginx | test 14, `test_security_hardening.py`, `test_deploy_config.py`, [`docs/security-checklist.md`](docs/security-checklist.md) |
+| Live updates | SSE per event via Redis pub/sub; coalesced fresh snapshots; one subscription per process; no DB connection held by a stream | `tests/integration/test_live_updates.py` |
+| Operations | 3 replicas behind nginx; Prometheus metrics and a provisioned Grafana dashboard; JSON logs with a correlation id carried from nginx through the outbox to the worker | `test_metrics.py`, `test_correlation.py` |
+| Load and chaos | Locust load test, `verify_consistency.py`, chaos runner (kill worker, flush Redis, two workers), benchmark runner | `loadtest/`, `tests/integration/test_verify_consistency.py` |
+
+**Tests:** 350 (75 unit, 196 integration, 7 concurrency, 72 adversarial),
+against real Postgres 16 and Redis 7 started by testcontainers. A guard fails
+any test that raises `invariant_violations_total` unless it trips a backstop
+on purpose. CI runs ruff, mypy, all tests, every migration on an empty
+database (and back down), `alembic check`, the image build, `nginx -t` and a
+Makefile dry run.
+
+## Run it
 
 Needs Python 3.12, [uv](https://docs.astral.sh/uv/), Git and Docker Desktop.
 
 ```
-cp .env.example .env                    # then replace every CHANGE_ME
+cp .env.example .env          # then replace every CHANGE_ME with a long random value
 uv sync
-docker compose up -d --wait postgres redis   # only the databases, for local dev
-uv run python -m alembic upgrade head   # create or update the tables
-uv run python -m scripts.seed_admin --email you@example.com --username you
-uv run python -m uvicorn app.main:app --reload
-```
-
-Then open http://127.0.0.1:8000/docs, log in, click **Authorize**, and paste
-the access token.
-
-### The whole system in Docker (S8.1)
-
-```
-docker compose up -d --build --wait     # Postgres, Redis, migrations, 3 api, worker, nginx
+make up                       # or: docker compose up -d --build --wait
 docker compose exec api python -m scripts.seed_admin --email you@example.com --username you
 ```
 
-The API is then at http://127.0.0.1:8080 (nginx, round robin over 3 api
-replicas). Prometheus is at http://127.0.0.1:9090 and Grafana at
-http://127.0.0.1:3000 (user `admin`, password `GRAFANA_ADMIN_PASSWORD` from
-`.env`; the **seatsurge** dashboard is preloaded). The replicas have no port of their own. Stop with
-`docker compose down` (add `-v` to also delete the database volume).
+- API (nginx, 3 replicas): http://127.0.0.1:8080 (docs at `/docs` outside production)
+- Prometheus: http://127.0.0.1:9090
+- Grafana: http://127.0.0.1:3000 (user `admin`, password `GRAFANA_ADMIN_PASSWORD`)
 
-### The load test (S8.3)
-
-With the stack up (`make up`):
+Develop against just the databases:
 
 ```
-make load        # 1,000 buyers on 100 seats through nginx, then the consistency check
-make verify      # Postgres and Redis agree, nothing oversold (exit 1 if not)
-make load-clean  # delete exactly what the last load run created
+docker compose up -d --wait postgres redis
+uv run python -m alembic upgrade head
+uv run python -m uvicorn app.main:app --reload       # http://127.0.0.1:8000
+uv run python -m app.worker.main                     # in a second terminal
 ```
 
-Chaos runs (each starts a throwaway copy of the stack on other ports,
-breaks it mid-sale, verifies, and deletes the copy):
+Tests and checks (Docker must be running):
 
 ```
-uv run --group load python -m loadtest.chaos kill-worker
-uv run --group load python -m loadtest.chaos flush-redis
-uv run --group load python -m loadtest.chaos two-workers
+make test                     # or: uv run python -m pytest
+make lint                     # ruff, ruff format --check, mypy
 ```
 
-On Windows (no `make`), run the commands listed under each target in the
-`Makefile`, e.g. `uv run python -m loadtest.prepare --seats 100 --users 1000`.
-
-Checks (Docker must be running for the tests):
+The headline test, the consistency check, chaos and benchmarks (stack up):
 
 ```
-uv run python -m pytest -v
-uv run python -m ruff check .
-uv run python -m ruff format --check .
-uv run python -m mypy
-uv run python -m alembic check
+make load                     # 1,000 buyers on 100 seats, then verify_consistency
+make verify                   # exit 1 on any Postgres/Redis mismatch
+make load-clean               # delete exactly what the last load run created
+uv run --group load python -m loadtest.chaos kill-worker    # or flush-redis, two-workers
+uv run --group load python -m loadtest.benchmark --runs 5
 ```
 
-On Windows, run tools as `python -m <tool>`: Smart App Control blocks the
-unsigned `.exe` launchers in `.venv\Scripts`.
+On Windows without `make`, run the command listed under each target in the
+`Makefile`, and run tools as `python -m <tool>` (Smart App Control can block
+the `.exe` launchers in `.venv\Scripts`).
 
 ## Repository layout
 
-| Folder | What goes in it |
+| Folder | What's in it |
 |---|---|
-| `app/api/` | HTTP routes, request/response models, dependencies, error handlers |
-| `app/core/` | Settings, password hashing, JWT tokens, typed errors |
+| `app/api/` | Routes, request/response models, dependencies, error handlers, middleware (metrics, correlation id, body limit) |
+| `app/core/` | Settings, security, tokens, typed errors, metrics, logging, correlation id |
 | `app/db/` | Table models and sessions |
-| `app/redis/` | Redis client (Lua scripts arrive in Phase B) |
-| `app/services/` | Business logic: auth, refresh tokens, events |
-| `app/worker/` | Background tasks (Phase C) |
+| `app/redis/` | Client, key schema, `lua/*.lua` and their typed wrappers, rehydrate, rate limiter |
+| `app/services/` | Business logic: holds, orders, tickets, cancellations, reconcile, events, auth, mock payments |
+| `app/worker/` | Relay, consumer, retries, dead letters, sweeper, live publisher, backlog gauges |
 | `migrations/` | Alembic migrations |
-| `scripts/` | `seed_admin.py`, `check_connections.py` |
-| `tests/` | `unit/`, `integration/`, `adversarial/` (and `concurrency/` from Phase B) |
-| `docs/` | `design.md`, `failure-modes.md`, `glossary.md`, `learning-log.md` |
-| `learning/` | Concept primers and runnable examples |
+| `tests/` | `unit/`, `integration/`, `concurrency/`, `adversarial/` (tests 2 to 16) |
+| `loadtest/` | Locust file, prepare/cleanup, chaos runner, benchmark runner |
+| `scripts/` | `seed_admin.py`, `verify_consistency.py`, `check_connections.py` |
+| `deploy/` | nginx, Prometheus and Grafana configuration |
+| `docs/` | Design, failure modes, benchmarks, security checklist, interview notes, glossary, learning log |
+| `learning/` | Concept primers and runnable demos (including "break it on purpose" ones) |
 
-## Known limitations (Phase A)
+## Known limitations
 
-- Access tokens can't be revoked early: a deleted or demoted user keeps
-  access for up to 15 minutes (the stateless-auth trade-off).
-- Old refresh-token rows aren't cleaned up yet.
-- Admins can't list draft events through the API; tiers can't be edited
-  after creation.
-- Name search scans the table (fine for a small catalogue; no search index).
+- **One machine's numbers.** The benchmarks ran the load generator on the
+  same laptop as the system, which was CPU-saturated; they show correctness
+  under a burst, not capacity.
+- **CPU per replica.** Each replica is a single Python process; under the
+  burst that core is the bottleneck. More processes help server-side time
+  (measured), but weren't adopted.
+- **No high availability.** One Postgres and one Redis, no replicas or
+  failover. Losing Redis is survivable (tested); losing Postgres stops sales.
+- **Reconcile is manual.** After a Redis loss, counters rebuild themselves,
+  but re-sending lost order messages needs an admin to call reconcile.
+- **Hold idempotency lives in Redis.** After a Redis flush, a retried hold
+  request with the same key can create a second hold (still within the
+  per-user cap). Orders have a database-level idempotency constraint.
+- **Access tokens can't be revoked early** (up to 15 minutes, the
+  stateless-auth trade-off). Old refresh-token rows aren't cleaned up.
+- **Admin gaps:** admins can't list draft events; tiers can't be edited
+  after creation; name search scans the table (no search index).
+- **Payments are a mock.** No real provider; and when a paid order later
+  fails in the worker (and its seats are released), nothing refunds the
+  payment, because the mock lives in the API process.
 
 ## Out of scope
 
-Kafka, a front-end app, microservices, real payments and Kubernetes.
+Kafka, a front-end app, microservices, real payments and Kubernetes
+(CLAUDE.md section 2).
+
+## Documentation
+
+- [`docs/design.md`](docs/design.md): every decision, the alternative, and why
+- [`docs/failure-modes.md`](docs/failure-modes.md): failure, what breaks, how it's prevented, the test
+- [`docs/benchmarks.md`](docs/benchmarks.md): measured results and where the time goes
+- [`docs/security-checklist.md`](docs/security-checklist.md): the security requirements, item by item
+- [`docs/interview-notes.md`](docs/interview-notes.md): likely interview questions with honest answers
+- [`docs/glossary.md`](docs/glossary.md) and [`docs/learning-log.md`](docs/learning-log.md)

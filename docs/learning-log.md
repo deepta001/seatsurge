@@ -58,6 +58,7 @@ checked. The teach-back for all of them happens at the end.
 - S8.3 Locust load test and verify_consistency.py: built, not checked.
 - S8.4 Chaos runs and test 16: built, not checked.
 - S8.5 docs/benchmarks.md with measured numbers: built, not checked.
+- Final wrap-up (docs polish, interview notes): built; mock interview and resume wording still to do with the student.
 
 ## Shaky topics
 
@@ -2492,3 +2493,28 @@ setup), client vs server latency, CPU-bound processes, controlled
 experiments, distrusting your tools.
 
 **Understanding check:** deferred to the end of the project.
+
+## Final phase: wrap-up (2026-11-09)
+
+The Phase E review was skipped (the student chose "Start final wrap-up").
+
+**Done:**
+- `README.md` rewritten as the final overview: status, measured results,
+  how it works (the request flow and why it can't oversell), what's built
+  with the test that proves each part, how to run everything, an accurate
+  repository layout, and honest known limitations (one-laptop numbers, CPU
+  per replica, no high availability, manual reconcile, hold idempotency in
+  Redis, token revocation, admin gaps, mock payments). The old README still
+  said "Phase A complete" and "in progress" for finished parts.
+- `docs/interview-notes.md`: 22 likely questions with short, honest answers
+  pointing at the code, including limitations and real bugs found.
+- `docs/design.md`: a "big decisions at a glance" table for the six key
+  decisions (Lua, holds with TTL, outbox, at-least-once + idempotency,
+  backstops, no hot rows), linking to the detailed entries.
+
+**Still to do, with the student:**
+- the mock interview (15+ questions from `docs/interview-notes.md`, one at
+  a time, with honest feedback);
+- resume wording from measured facts only;
+- the deferred understanding checks for every step (see "Deferred learning"
+  at the top of this log).

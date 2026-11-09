@@ -1,9 +1,19 @@
 # Design decisions
 
-Each decision: what we chose, the alternative we considered, and why.
-Decisions are added as they are made. The big ones from CLAUDE.md (Lua for
-atomicity, holds with TTL, outbox, at-least-once plus idempotency, DB
-backstops, no hot rows) get their own sections when those parts are built.
+Each decision: what we chose, the alternative we considered, and why. The
+sections below are in the order the decisions were made; this first section
+summarises the six that matter most.
+
+## The big decisions at a glance
+
+| Decision | Instead of | Why | Details |
+|---|---|---|---|
+| **Lua scripts in Redis for every inventory change** | read, check, then decrement from Python | A script runs atomically inside Redis, so two requests can't both see "1 left" and both take it; multi-seat holds are all-or-nothing. The naive version oversells (`learning/examples/s2_1/`), and test 1 fails with it | "reserve_tier.lua" (S2.3), "Holding specific seats" (S6.2) |
+| **Holds with a TTL, then confirm** | buy in one step | Paying takes time and people abandon checkouts; a hold reserves seats without blocking anyone forever, and the sweeper returns them exactly once | "Releasing holds" and "The sweeper" (S2.7) |
+| **An outbox in Postgres** | publish to Redis from the request handler | "Order saved" and "message sent" are two systems; writing the event row in the same transaction as the order makes them one commit, and a relay publishes it afterwards | "Confirming a hold" (S3.3), "The outbox relay" (S4.1), "Relay crashes" (S4.7) |
+| **At-least-once delivery + idempotent consumers** | trying for exactly-once delivery | Exactly-once delivery across a crash isn't achievable here; duplicates are. Recording each message id in the same transaction as the work makes a duplicate a no-op | "Idempotent processing" (S4.4) |
+| **Database backstops** | trusting Redis | Redis can be wrong (bug, flush, lost key). `sold <= capacity` CHECK, the conditional `UPDATE ... WHERE sold + q <= capacity`, and a partial unique index per seat make an oversell impossible to commit; if one ever fires, `invariant_violations_total` says so | "Issuing tickets with database backstops" (S4.5) |
+| **No hot rows** | a shared "available seats" column updated per hold, or an ORM version column | Every hold would queue on one row lock (or retry on version conflicts). Holds touch only Redis; the tier row changes once per issued order, in one atomic statement, so concurrent workers wait briefly and never retry (test 16) | "Issuing tickets with database backstops" (S4.5, "Isn't that a hot row?"), "Chaos runs and two workers" (S8.4) |
 
 ## Database
 
