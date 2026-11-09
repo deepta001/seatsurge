@@ -135,3 +135,9 @@ async def confirm(
         json={"payment_token": token, **(extra or {})},
         headers={**bearer(user_id), "Idempotency-Key": key or new_key()},
     )
+
+
+async def stream_messages(redis: Redis, stream: str) -> list[dict[str, str]]:
+    """Every entry in a Redis Stream, oldest first, as plain {field: value} dicts."""
+    entries = await redis.xrange(stream) or []
+    return [{str(k): str(v) for k, v in (fields or {}).items()} for _, fields in entries]

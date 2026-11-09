@@ -9,6 +9,8 @@ HOLDS_EXPIRY_KEY = "holds:expiry"
 # Holds being confirmed: score = expires_at + grace (ms). Kept apart so the
 # expiry sweeper never releases a hold that is in the middle of being bought.
 HOLDS_CONFIRMING_KEY = "holds:confirming"
+# The Redis Stream the outbox relay publishes order events to; the worker reads it.
+ORDERS_STREAM_KEY = "stream:orders"
 
 
 def inventory_key(event_id: int, tier_id: int) -> str:

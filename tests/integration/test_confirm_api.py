@@ -1,6 +1,7 @@
 """POST /holds/{id}/confirm against real Postgres and Redis (CLAUDE.md section 7.2)."""
 
 import asyncio
+import json
 from typing import Any
 
 import pytest
@@ -9,10 +10,18 @@ from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from app.redis.keys import HOLDS_CONFIRMING_KEY, HOLDS_EXPIRY_KEY, hold_key, inventory_key
+from app.db.session import create_session_factory
+from app.redis.keys import (
+    HOLDS_CONFIRMING_KEY,
+    HOLDS_EXPIRY_KEY,
+    ORDERS_STREAM_KEY,
+    hold_key,
+    inventory_key,
+)
 from app.services import orders as orders_service
 from app.services.payments import MockPaymentProvider
-from tests.sales import Sale, bearer, confirm, hold, new_key
+from app.worker.relay import relay_batch
+from tests.sales import Sale, bearer, confirm, hold, new_key, stream_messages
 
 PRICE = 5000  # the `sale` fixture's Floor tier price, in cents
 
@@ -242,3 +251,25 @@ async def test_confirm_needs_a_login_and_an_idempotency_key(
 
     assert no_login.status_code == 401
     assert no_key.status_code == 422
+
+
+async def test_the_relay_publishes_a_confirmed_order_to_the_stream(
+    client: AsyncClient,
+    redis: Redis,
+    db_engine: AsyncEngine,
+    sale: Sale,
+    buyers: list[int],
+    payments: MockPaymentProvider,
+    held: str,
+) -> None:
+    order_id = (await confirm(client, held, buyers[0])).json()["order_id"]
+
+    published = await relay_batch(create_session_factory(db_engine), redis)
+
+    assert published == 1
+    [fields] = await stream_messages(redis, ORDERS_STREAM_KEY)
+    assert (fields["type"], fields["aggregate_id"]) == ("order.placed", order_id)
+    payload = json.loads(fields["payload"])
+    assert (payload["order_id"], payload["hold_id"], payload["quantity"]) == (order_id, held, 3)
+    [event] = await rows(db_engine, "SELECT status FROM outbox_events")
+    assert event["status"] == "PUBLISHED"

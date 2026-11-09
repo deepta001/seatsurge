@@ -35,6 +35,7 @@ checked. The teach-back for all of them happens at the end.
 - S3.1 Transactions primer; orders and tickets tables: built, not checked.
 - S3.2 Mock payment provider: built, not checked.
 - S3.3 consume_hold.lua and POST /holds/{id}/confirm (tests 2, 3): built, not checked.
+- S4.1 Outbox primer and a basic relay using SKIP LOCKED: built, not checked.
 
 ## Shaky topics
 
@@ -1192,5 +1193,52 @@ doubles (mocks).
 order status), compensating actions (revert, refund), one transaction for
 data plus its outbox, row locks scoped per user, not trusting the client,
 409 vs 410 vs 402.
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S4.1: Outbox primer; a basic relay using SKIP LOCKED (2026-11-09)
+
+**What was built:**
+- `learning/14-outbox-pattern.md`, the primer, plus
+  `learning/examples/s4_1/skip_locked_demo.py`.
+- `app/worker/relay.py`:
+  - `relay_batch` selects due PENDING rows, oldest first, 50 at a time,
+    `FOR UPDATE SKIP LOCKED`. It XADDs each one to `stream:orders` in its own
+    try/except, marks it PUBLISHED, then commits.
+  - `run_relay` loops forever, going again straight away after a full batch.
+- `ORDERS_STREAM_KEY = "stream:orders"` in `app/redis/keys.py`.
+- `app/worker/main.py` now runs the sweeper and the relay side by side in an
+  `asyncio.TaskGroup`.
+- Each stream entry carries `outbox_id`, `type`, `aggregate_id` and
+  `payload` (JSON text).
+- Tests: `tests/integration/test_outbox_relay.py` (6), plus an end-to-end
+  test in `test_confirm_api.py` (confirm, then relay, then a stream entry).
+  `tests/sales.py` gained `stream_messages()`.
+
+**Ran it:**
+- 199/199 tests passed; ruff and mypy are clean.
+- Mutation check:
+  - plain `FOR UPDATE` (no SKIP LOCKED) fails the "locked row is skipped"
+    test;
+  - removing the lock entirely also fails "4 concurrent relays publish
+    every row exactly once" (3 out of 3 runs).
+- SKIP LOCKED demo on the dev DB: relay A locked rows [2, 3]; relay B's
+  plain `FOR UPDATE` waited 1 s and gave up; `SKIP LOCKED` got [4] at once.
+- The real worker on the dev stack: a demo outbox row was PUBLISHED and
+  showed up in `stream:orders` within about a second. Only the demo's row
+  and the (previously non-existent) stream were deleted afterwards.
+
+**Debugging moments:**
+1. asyncpg rejected the string `'0 seconds'` for an `interval` parameter (it
+   wants a Python `timedelta`). Fixed by passing seconds to
+   `make_interval(secs => :d)`.
+2. redis-py's type hints say `xrange` might return `None`, so the tests read
+   streams through a small typed helper.
+
+**Key concepts:** the outbox pattern, at-least-once delivery (publish, then
+mark), row locks that skip instead of wait, Redis Streams as an append-only
+log, batch-and-loop background tasks.
 
 **Understanding check:** deferred to the end of the project.

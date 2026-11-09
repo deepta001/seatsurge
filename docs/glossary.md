@@ -437,3 +437,15 @@ Plain-English meanings of every technical term, with where it first appears.
 | Row lock (`SELECT ... FOR UPDATE`) | Makes concurrent transactions touching the same row take turns. | Locking the user's row at confirm |
 | JSONB | Postgres's binary JSON column type: flexible structured data, queryable. | `outbox_events.payload` |
 | `WRONGTYPE` | Redis's error for using a command on the wrong data type (e.g. HMGET on a string). | The S3.3 robustness fix |
+
+## The outbox relay (S4.1)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| Relay | The background task that copies committed outbox rows to the Redis Stream. | `app/worker/relay.py` |
+| Redis Stream | An append-only log inside Redis; each entry gets an id like `1794216930353-0` (milliseconds-sequence) and holds a small map of fields. | `stream:orders` |
+| `XADD` | The Redis command that appends one entry to a stream. | `relay_batch()` |
+| `SKIP LOCKED` | Added to `FOR UPDATE`: rows another transaction has locked are skipped instead of waited for. | The relay's SELECT |
+| At-least-once delivery | Every message is delivered, but occasionally more than once, so receivers must handle duplicates. | Publish, then mark PUBLISHED |
+| Batch | Handling up to N items per pass (here 50) instead of one per query. | `BATCH_SIZE` |
+| `asyncio.TaskGroup` | Runs several async tasks at once and waits for all of them. | `app/worker/main.py` |

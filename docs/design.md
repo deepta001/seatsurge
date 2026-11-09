@@ -395,3 +395,34 @@ backstops, no hot rows) get their own sections when those parts are built.
 - **Fix:** both skip such entries per hold and log them; the sweeper also
   drops them from `holds:expiry`. They can't be real holds, so skipping
   them can't hide held seats. Regression tests in adversarial tests 12 and 5.
+
+### The outbox relay (S4.1)
+- **What it does:** `app/worker/relay.py` reads due PENDING rows from
+  `outbox_events` (oldest first, 50 at a time), XADDs each to
+  `stream:orders`, marks it PUBLISHED and commits. It runs as an asyncio task
+  in the worker process, next to the sweeper.
+- **Why an outbox instead of publishing from the confirm request:** Postgres
+  and Redis can't share a transaction. Publish-then-commit can announce an
+  order that never existed; commit-then-publish can lose the message if the
+  API dies in between. Writing the message as a row in the order's own
+  transaction makes "order exists" and "message exists" one atomic fact.
+- **Publish, then mark (at-least-once):** if the relay dies after XADD but
+  before its commit, the row is still PENDING and is published again. That's
+  a duplicate, never a loss. Every message carries `outbox_id`, so the
+  consumer can de-duplicate even though each copy gets a new stream entry
+  id (S4.4).
+- **`FOR UPDATE SKIP LOCKED`:** rows are locked while a relay works on them;
+  a second relay skips them instead of queueing behind the lock. Several
+  relays (or worker replicas) share the work without double-publishing or
+  waiting. Alternative: a single relay with no locking. It's simpler, but
+  running two by accident would publish everything twice.
+- **One row's failure is isolated:** each XADD has its own try/except, so a
+  failing row stays PENDING and the rest of the batch is still published.
+- **The row locks are held during the XADDs:** a batch is at most 50 fast
+  Redis calls, so the locks are short. A Redis outage fails the XADDs
+  quickly, the batch commits only the rows that succeeded, and the loop
+  backs off for 0.5 s.
+- **Still to come:**
+  - attempts, `last_error`, exponential backoff and DEAD (S4.2);
+  - deleting old PUBLISHED rows;
+  - trimming the stream once consumers acknowledge (S4.3+).
