@@ -928,9 +928,10 @@ load test (S8.3).
   call, including waiting for a free Redis connection and event-loop
   scheduling. In a 1,000-buyer burst it showed a p99 of ~0.9 s for
   `rate_limit`, while Redis's own `INFO commandstats` showed ~40 us per
-  script call: the wait is the connection pool (50 per replica, ~333
-  concurrent requests each), not Redis. Both views are useful; this one is
-  the one users feel. Tuning comes with the load test (S8.3).
+  script call: the wait is inside the app, not in Redis. Both views are
+  useful; this one is the one users feel. (S8.2 guessed the Redis connection
+  pool; S8.5 measured further and found the main cost is CPU: each replica's
+  single process is saturated during the burst. See `docs/benchmarks.md`.)
 - **Grafana is provisioned from the repo** (`deploy/grafana/`): data source
   and dashboard JSON load at startup and can't be edited in the UI, so the
   dashboard is reviewed like code.
@@ -1026,3 +1027,18 @@ load test (S8.3).
   is replaced while Locust is still ramping up, and the replacements had no
   buyers left (found in the first chaos run). A watcher greenlet ends the test
   once every buyer has finished.
+
+### Measuring honestly (S8.5)
+- **Two views of latency, side by side:** Locust (what a client saw) and the
+  replicas' own histogram (request in -> response out). The gap between them
+  is time spent outside the app (connection setup, the load generator).
+- **Medians of several runs, with min and max:** one run can be lucky.
+- **Diagnose before tuning:** CPU per container during the burst, total host
+  CPU, Redis's own `INFO commandstats`, and one controlled experiment (6
+  replicas instead of 3) that changed one thing. The experiment halved the
+  server-side time but not the client's, because the laptop was saturated:
+  so the committed configuration stays as it is, and the numbers are
+  presented as "correct under a burst on one laptop", not as capacity.
+- **Distrust the tools too:** Locust's CSV files dropped up to 215 of 1,100
+  requests when the test stopped itself; those results were thrown away and
+  re-measured from Locust's in-memory stats.

@@ -45,6 +45,7 @@ try to buy the same limited seats at once.
 | **Structured logs, traceable end to end (S8.2b):** one JSON object per log line; every request gets a correlation id (nginx's `$request_id`, or a fresh one; unsafe incoming ids are replaced), returned in `X-Correlation-ID`, written on every log line and access line, stored on the outbox row, and carried through the stream to the worker's log lines | all routes, relay, worker | `tests/integration/test_correlation.py`, `tests/unit/test_log_setup.py`; live: `learning/examples/s8_2b/trace_a_purchase.py` |
 | **Load test + consistency check (S8.3):** Locust, 1,000 buyers on 100 seats through nginx and 3 api replicas, each holding then confirming once: 3 runs, each exactly 100 holds / 900 sold out / 100 orders / 100 tickets, 0 failed requests, 0 oversold; `scripts/verify_consistency.py` then confirmed Postgres and Redis agree (exit 0). Latency numbers and machine specs go in `docs/benchmarks.md` (S8.5) | `make load`, `make verify` | `loadtest/`, `scripts/verify_consistency.py`, `tests/integration/test_verify_consistency.py` |
 | **Chaos runs (S8.4), the full headline test:** 1,000 buyers on 100 seats through nginx and 3 replicas while (a) the worker is SIGKILLed mid-stream (34 orders waiting, restarted 5 s later), (b) Redis is FLUSHALLed mid-sale (88 orders placed; reconcile re-queued 46 lost messages), (c) two workers share the work (46 / 54 orders). Each: exactly 100 tickets, 0 oversold, 0 failed requests, `verify_consistency` CONSISTENT. Run on a throwaway copy of the stack | `loadtest/chaos.py` | `loadtest/chaos.py` runs + adversarial test 16 |
+| **Benchmarks (S8.5):** 5 measured runs with machine specs, client and server latency, throughput, and a diagnosis of where the time goes (CPU per replica; laptop saturated), in `docs/benchmarks.md` | `loadtest/benchmark.py` | `loadtest/results/benchmark-*.json` (local) |
 | **Never oversell (test 1):** 500 concurrent HTTP buyers wanting 1-4 seats on 50 seats never take more than 50 (also with the counter rebuilt mid-rush); the test fails if the atomic script is swapped for naive check-then-take. A demo with 3 API processes on the dev stack: 1,000 buyers / 100 seats gave exactly 100 holds | `POST /events/{id}/holds` | `tests/concurrency/test_01_concurrent_holds_never_oversell.py` |
 | **Holds:** reserve 1-10 seats for 5 minutes via one atomic Redis Lua script; 409 sold_out or hold_limit_exceeded (10 per user per event); a missing counter is a 503, never zero. 300 simultaneous HTTP requests on 50 seats give exactly 50 holds | `POST /events/{id}/holds` | `tests/integration/test_holds_api.py`, `tests/integration/test_reserve_tier.py` |
 | A missing Redis counter is rebuilt from Postgres + active holds (one rebuild at a time, even for 50 simultaneous requests), never treated as zero; 503 only if the rebuild can't finish | automatic in `POST /events/{id}/holds` | adversarial test 12 |
@@ -56,6 +57,25 @@ The 305 tests (55 unit, 172 integration, 7 concurrency, 71 adversarial) run
 against a real Postgres 16 and Redis 7 started by testcontainers. CI also applies every migration to an
 empty database, runs `alembic check` for model drift, and proves the
 downgrade path.
+
+## Results (measured; details in `docs/benchmarks.md`)
+
+1,000 buyers competing for 100 seats at the same instant, through nginx and
+3 api replicas, on one laptop (Intel Core Ultra 5 226V, 8 cores, Docker
+Desktop; the load generator on the same machine). Median of 5 runs:
+
+| | |
+|---|---|
+| Tickets issued / oversold | 100 / **0** in every run (also with the worker killed or Redis flushed mid-sale) |
+| Failed requests | 0 |
+| Postgres and Redis agree afterwards | yes, every run (`verify_consistency`) |
+| Hold latency, client side, p50 / p95 / p99 | 2.2 s / 2.9 s / 3.0 s |
+| Throughput during the burst | ~356 requests/s (all 1,100 requests in ~3.1 s) |
+
+The latency is queueing, not work: Redis runs each atomic script in ~52 us,
+while each replica's single Python process and the laptop as a whole are
+CPU-saturated during the burst. These are not capacity figures; see the
+benchmark notes.
 
 ## Architecture so far (Phase A)
 

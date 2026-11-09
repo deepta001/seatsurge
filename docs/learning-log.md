@@ -57,6 +57,7 @@ checked. The teach-back for all of them happens at the end.
 - S8.2b Structured logs and the correlation id: built, not checked.
 - S8.3 Locust load test and verify_consistency.py: built, not checked.
 - S8.4 Chaos runs and test 16: built, not checked.
+- S8.5 docs/benchmarks.md with measured numbers: built, not checked.
 
 ## Shaky topics
 
@@ -2448,5 +2449,46 @@ rejection, consistency checks and exit codes, cleanup by id.
 **Key concepts:** chaos testing, recovery paths (ack after commit, rebuild
 from the source of truth, re-queue), hot rows and atomic updates, isolated
 test environments.
+
+**Understanding check:** deferred to the end of the project.
+
+## S8.5: docs/benchmarks.md with real, measured numbers (2026-11-09)
+
+**Built:**
+- `loadtest/benchmark.py`: repeats prepare -> Locust -> verify -> cleanup,
+  records client (Locust) and server (Prometheus) latency per run, and the
+  median / min / max across runs, to `loadtest/results/benchmark-<label>.json`.
+- `loadtest/locustfile.py`: saves Locust's final in-memory stats at the end.
+- `docs/benchmarks.md`: the test, the machine, the numbers, where the time
+  goes, what's not done. README gains a Results section.
+
+**Measured (5 runs, 3 replicas, one laptop):**
+- every run: 100 tickets, 0 oversold, 0 failed requests, consistent;
+- hold p50 / p95 / p99 (client): 2.2 / 2.9 / 3.0 s; confirm p50 1.5 s;
+  ~356 requests/s; all 1,100 requests in ~3.1 s;
+- server-side hold p50 ~1.7 s; Redis ~52 us per script call.
+
+**Diagnosis:**
+- each replica at ~100% of a core, Postgres ~120%, Redis 17%;
+- 6 replicas (experiment, not committed): server p50 1.7 s -> 0.73 s, client
+  unchanged (2.2 s);
+- whole laptop at 85 to 92% CPU during the burst: client and server share
+  the machine, so end-to-end numbers are bounded by it.
+
+**Debugging moments:**
+1. **Bad data caught:** Locust's CSV files counted 885 to 1,100 requests per
+   run, while 1,100 had happened. All results from those files were
+   discarded and re-measured; the corrected data reversed one conclusion
+   (the client did NOT get faster with 6 replicas).
+2. My S8.2 guess (Redis connection pool) was wrong in the main: the script
+   timer includes event-loop waiting, and the loop is CPU-saturated.
+   `docs/design.md` now says so.
+
+**Not changed:** the committed configuration (3 replicas, default pools).
+Tuning would be its own measured step; ideas are listed in benchmarks.md.
+
+**Key concepts:** benchmarking method (repeat, medians and spread, same
+setup), client vs server latency, CPU-bound processes, controlled
+experiments, distrusting your tools.
 
 **Understanding check:** deferred to the end of the project.

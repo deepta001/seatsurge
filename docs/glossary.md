@@ -628,3 +628,7 @@ Plain-English meanings of every technical term, with where it first appears.
 | SIGKILL | The "stop now" signal: the process gets no chance to clean up. | the kill-worker scenario |
 | Compose project | One named copy of a Compose setup; two projects can run side by side. | `seatsurge-chaos` |
 | Hot row | One database row that very many transactions update, which can make them conflict. | `tiers`, test 16 |
+| Benchmark | A repeatable measurement of how fast or how much, with the setup written down. | `docs/benchmarks.md` |
+| Throughput | How much work per second (here, requests per second). | benchmarks |
+| CPU-bound | Limited by processor time rather than waiting on disks or networks. | the api replicas under the burst |
+| Load generator | The program that plays the users (Locust); it uses CPU too. | `loadtest/` |

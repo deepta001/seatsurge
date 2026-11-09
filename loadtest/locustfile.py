@@ -30,6 +30,7 @@ from app.db.models import UserRole
 
 RUN_FILE = Path(__file__).parent / "run.json"
 CREATED_FILE = Path(__file__).parent / "created.json"
+STATS_FILE = Path(__file__).parent / "results" / "last-stats.json"
 
 RUN: dict[str, Any] = json.loads(RUN_FILE.read_text(encoding="utf-8"))
 UNUSED_BUYERS = iter(RUN["user_ids"])
@@ -120,9 +121,31 @@ def stop_when_every_buyer_has_finished(environment: Any, **_kwargs: Any) -> None
     gevent.spawn(watch)
 
 
+def final_stats(environment: Any) -> dict[str, Any]:
+    """Locust's own numbers for EVERY request, taken at the very end (S8.5).
+
+    Its --csv files can miss the last requests when the test stops itself,
+    so the benchmark reads these instead.
+    """
+    entries = [*environment.stats.entries.values(), environment.stats.total]
+    return {
+        entry.name: {
+            "requests": entry.num_requests,
+            "failures": entry.num_failures,
+            "p50_ms": entry.get_response_time_percentile(0.5),
+            "p95_ms": entry.get_response_time_percentile(0.95),
+            "p99_ms": entry.get_response_time_percentile(0.99),
+            "max_ms": entry.max_response_time,
+            "requests_per_s": entry.total_rps,
+        }
+        for entry in entries
+    }
+
+
 def report(environment: Any, **_kwargs: Any) -> None:
-    """Print what happened and save what was created (for loadtest/cleanup.py)."""
+    """Print what happened; save what was created (for cleanup) and the final stats."""
     CREATED_FILE.write_text(json.dumps(CREATED), encoding="utf-8")
+    STATS_FILE.write_text(json.dumps(final_stats(environment)), encoding="utf-8")
     print("\nOutcomes:")
     for outcome, count in sorted(OUTCOMES.items()):
         print(f"  {outcome:32} {count}")
