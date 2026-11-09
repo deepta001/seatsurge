@@ -549,3 +549,12 @@ Plain-English meanings of every technical term, with where it first appears.
 | Seat map | The list of an event's seats and whether each is free, held or sold. | `GET /events/{id}/seats` |
 | Foreign key | A column that must match an existing row in another table. | `tickets.seat_id -> seats.id` |
 | `MGET` | Redis: read many keys in one round trip. | `held_seat_ids()` |
+
+## Holding seats (S6.2)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| All-or-nothing | Either every part of a request happens, or none of it. | `reserve_seats.lua` |
+| Seat key | `seat:{event}:{seat_id}`: exists while a hold has the seat; its value is the hold id. | Holds, release, seat map |
+| Sold set | `sold:{event}`: seat ids that can never be held again, plus a `built` marker. | `reserve_seats.lua`, `rebuild_sold_set()` |
+| `SISMEMBER` / `SADD` | Redis: test whether a set contains a value / add values to a set. | The sold set |

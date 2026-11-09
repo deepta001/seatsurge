@@ -46,6 +46,7 @@ checked. The teach-back for all of them happens at the end.
 - S5.2 Flushing Redis mid-sale and recovering (test 11): built, not checked.
 - S5.3 Cancellation through the outbox (test 13): built, not checked.
 - S6.1 Reserved seating: data model and seat-map endpoint: built, not checked.
+- S6.2 reserve_seats.lua (all-or-nothing) and seat holds: built, not checked.
 
 ## Shaky topics
 
@@ -1826,5 +1827,69 @@ test instead of hoping for it.
 **Key concepts:** modelling physical seats, foreign keys as guards, deriving
 a view's state from where each truth lives (Postgres for sold, Redis for
 held), compact responses for hot endpoints.
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S6.2: reserve_seats.lua (all-or-nothing) and its endpoint (2026-11-09)
+
+**Scope decision:** this step covers *holding* specific seats. *Buying*
+them touches confirm, the order row, ticket issuing, `finish_hold` and
+cancel, which is well past one step's size. It becomes **S6.2b**, before
+S6.3's double-sell tests. Until then, confirming a seat hold is a clear 422
+`seat_purchase_not_available`, and the hold is left untouched.
+
+**What was built:**
+- `app/redis/lua/reserve_seats.lua`:
+  - `{-2}` if `sold:{event}` is missing (rule 4);
+  - `{-3}` if the user would go over the cap;
+  - `{-1, seat}` if any seat has a `seat:{event}:{id}` key or is in the
+    sold set;
+  - only then: SET every seat key to the hold id, HSET the hold (with a
+    `seats` field), ZADD it to `holds:expiry`, and INCRBY the user's held
+    count.
+- `app/redis/seat_scripts.py`: the wrapper, plus `rebuild_sold_set` (one
+  process at a time; a single SADD with a `built` marker and every seat
+  that has an ISSUED ticket).
+- `release_hold.lua` also deletes the hold's seat keys, but only the ones
+  that still point at *this* hold. Cancel, the expiry sweeper and failed
+  orders all free seats.
+- `create_seat_hold`: the event must be on sale and RESERVED; every seat
+  must belong to the event and all must be in one tier (422
+  `invalid_seats`). On NOT_INITIALISED it rebuilds the sold set and retries
+  once.
+- `POST /events/{id}/holds` takes either `{tier_id, quantity}` or
+  `{seat_ids}` (1-10, distinct). The response gains `seat_ids` (empty for
+  general admission). New errors: `seat_taken` 409, `invalid_seats` 422,
+  `seat_purchase_not_available` 422.
+- `tests/integration/test_seat_holds.py` (18 tests).
+
+**Ran it:**
+- 283/283 tests passed; ruff and mypy are clean; the seat-hold tests passed
+  3 runs in a row.
+- Mutation check, with four broken versions, each caught:
+  1. taking seats one by one (not all-or-nothing);
+  2. a missing sold set treated as "nothing sold";
+  3. release deleting seat keys that belong to another hold;
+  4. no sold check.
+- Live against the API (4 seats):
+  - Ann held Stalls-1 and Stalls-2: 201;
+  - Bo asked for Stalls-2 and Stalls-3: 409 `seat_taken`, with nothing
+    held (Stalls-3 stayed AVAILABLE);
+  - Bo held Stalls-3: 201;
+  - Ann cancelled: 204, and Stalls-1 and Stalls-2 were AVAILABLE again.
+  - Only the demo's data and keys were deleted.
+
+**Debugging moments:**
+1. My first draft of the cap test ended in broken placeholder lines, and
+   with 10 seats the 11th couldn't be requested. The venue now has 12
+   seats.
+2. The confirm-guard test needed the `payments` fixture (the app's provider
+   wasn't set up without it).
+
+**Key concepts:** all-or-nothing as "check everything, then write
+everything" inside one atomic script; a marker member so an empty set and
+a missing set can be told apart; deleting only what you own.
 
 **Understanding check:** deferred to the end of the project.

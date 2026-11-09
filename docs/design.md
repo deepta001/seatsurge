@@ -707,3 +707,26 @@ recovers:
   tier) never changes, so `?layout=true` returns it once.
 - **Not yet:** tiers still can't be edited after creation, so the seat
   layout can't change either; nothing writes seat keys until S6.2.
+
+### Holding specific seats (S6.2)
+- **All or nothing in one script:** `reserve_seats.lua` first checks every
+  requested seat (no `seat:{event}:{id}` key; not in `sold:{event}`), and
+  only if all are free writes anything: each seat key gets the hold id, then
+  the hold record, its expiry entry and the user's held count. Redis runs
+  the script as one step, so overlapping requests can't both win a seat.
+- **No per-tier counter for reserved seating:** the seat keys and the sold
+  set *are* the inventory. General admission keeps its counters.
+- **Rule 4 for the sold set:** an empty set and a missing set look the same
+  in Redis, so the set always contains a `built` marker. A missing set means
+  "not built": the request rebuilds it from Postgres (ISSUED tickets with a
+  seat), one process at a time, in one SADD, then retries.
+- **Releasing deletes only this hold's seat keys:** a seat key is deleted
+  only if its value is this hold's id, so a release can never free a seat
+  another hold owns.
+- **One tier per hold** keeps pricing as tier price x number of seats.
+- **Seat keys have no TTL:** they live exactly as long as the hold. The
+  sweeper (expiry), cancel and failed-order release remove them. A TTL
+  could expire a seat while its order is still being confirmed.
+- **Next (S6.2b):** buying seat holds (orders that remember their seats,
+  tickets with `seat_id`, `finish_hold` moving seats into the sold set,
+  cancel removing them, and the rebuild counting seats in PENDING orders).

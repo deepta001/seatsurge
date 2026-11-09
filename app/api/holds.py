@@ -5,27 +5,41 @@ connection) returns the first answer instead of creating a second hold.
 """
 
 from datetime import datetime
+from typing import Self
 
 from fastapi import APIRouter, Depends, Header, Path, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_user, get_db_session, get_redis
 from app.api.idempotent import run_idempotently
 from app.core.tokens import AccessTokenClaims
-from app.services.holds import cancel_hold, create_hold
+from app.services.holds import cancel_hold, create_hold, create_seat_hold
 
 router = APIRouter(tags=["holds"])
 
 
 class HoldCreate(BaseModel):
+    """General admission: {tier_id, quantity}. Reserved seating: {seat_ids}. Never both."""
+
     model_config = ConfigDict(extra="forbid")
 
-    tier_id: int
+    tier_id: int | None = None
     # At most 10 seats per hold (CLAUDE.md section 9).
-    quantity: int = Field(ge=1, le=10)
+    quantity: int | None = Field(default=None, ge=1, le=10)
+    seat_ids: list[int] | None = Field(default=None, min_length=1, max_length=10)
+
+    @model_validator(mode="after")
+    def one_kind_of_hold(self) -> Self:
+        general = self.tier_id is not None and self.quantity is not None
+        reserved = self.seat_ids is not None
+        if general == reserved or (reserved and (self.tier_id or self.quantity)):
+            raise ValueError("send either tier_id and quantity, or seat_ids")
+        if self.seat_ids is not None and len(set(self.seat_ids)) != len(self.seat_ids):
+            raise ValueError("seat_ids must not repeat")
+        return self
 
 
 class HoldResponse(BaseModel):
@@ -34,6 +48,7 @@ class HoldResponse(BaseModel):
     tier_id: int
     quantity: int
     expires_at: datetime
+    seat_ids: list[int] = []  # empty for general admission
 
 
 @router.post(
@@ -52,23 +67,34 @@ async def create(
     session: AsyncSession = Depends(get_db_session),
     redis: Redis = Depends(get_redis),
 ) -> JSONResponse:
-    """Hold seats in one tier for 5 minutes. 409 sold_out if there aren't enough."""
+    """Hold seats for 5 minutes: a number in one tier, or (reserved seating) specific seats.
+
+    409 sold_out if a tier hasn't enough left; 409 seat_taken if any chosen
+    seat is held or sold (then none are held).
+    """
 
     async def work() -> HoldResponse:
-        hold = await create_hold(
-            session,
-            redis,
-            user_id=user.user_id,
-            event_id=event_id,
-            tier_id=body.tier_id,
-            quantity=body.quantity,
-        )
+        if body.seat_ids is not None:
+            hold = await create_seat_hold(
+                session, redis, user_id=user.user_id, event_id=event_id, seat_ids=body.seat_ids
+            )
+        else:
+            assert body.tier_id is not None and body.quantity is not None  # checked above
+            hold = await create_hold(
+                session,
+                redis,
+                user_id=user.user_id,
+                event_id=event_id,
+                tier_id=body.tier_id,
+                quantity=body.quantity,
+            )
         return HoldResponse(
             hold_id=hold.hold_id,
             event_id=hold.event_id,
             tier_id=hold.tier_id,
             quantity=hold.quantity,
             expires_at=hold.expires_at,
+            seat_ids=list(hold.seat_ids),
         )
 
     return await run_idempotently(

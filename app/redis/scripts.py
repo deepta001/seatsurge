@@ -6,8 +6,10 @@ never deal with magic numbers like -3.
 """
 
 import enum
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from redis.asyncio import Redis
 
@@ -16,6 +18,7 @@ from app.redis.keys import (
     HOLDS_EXPIRY_KEY,
     hold_key,
     inventory_key,
+    seat_key,
     user_hold_key,
 )
 
@@ -92,6 +95,12 @@ class HoldStatus(enum.StrEnum):
     EXPIRED = "EXPIRED"
 
 
+def seats_of(record: Mapping[Any, Any]) -> list[str]:
+    """The seat ids stored on a hold record ("" or missing for general admission)."""
+    raw = str(record.get("seats") or "")
+    return [seat for seat in raw.split(",") if seat]
+
+
 class ReleaseHoldScript:
     """Give a hold's seats back exactly once. See app/redis/lua/release_hold.lua."""
 
@@ -133,6 +142,8 @@ class ReleaseHoldScript:
             inventory_key(int(event_id), int(tier_id)),
             user_hold_key(int(event_id), int(user_id)),
             HOLDS_CONFIRMING_KEY,
+            # Reserved seating: the seats this hold has, to free them too (S6.2).
+            *(seat_key(int(event_id), int(seat)) for seat in seats_of(record)),
         ]
         args: list[str | int] = [
             hold_id,

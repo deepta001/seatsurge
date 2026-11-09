@@ -48,3 +48,8 @@ def seats_returned_key(order_id: str) -> str:
 def seat_key(event_id: int, seat_id: int) -> str:
     """Exists while a seat is held; its value is the hold id (reserved seating, S6.2)."""
     return f"seat:{event_id}:{seat_id}"
+
+
+def sold_seats_key(event_id: int) -> str:
+    """The set of seat ids that can never be held again (sold), plus a "built" marker."""
+    return f"sold:{event_id}"

@@ -190,3 +190,23 @@ class NoSeatMap(DomainError):
     status_code = 422
     code = "no_seat_map"
     message = "This event is general admission: it has no individual seats."
+
+
+class InvalidSeats(DomainError):
+    status_code = 422
+    code = "invalid_seats"
+    message = "Choose seats that belong to this event, all in the same tier."
+
+
+class SeatTaken(DomainError):
+    # Someone else holds or bought at least one of the chosen seats; nothing was held.
+    status_code = 409
+    code = "seat_taken"
+    message = "One or more of those seats is no longer available."
+
+
+class SeatPurchaseNotAvailable(DomainError):
+    # Holding specific seats works (S6.2); buying them arrives in S6.2b.
+    status_code = 422
+    code = "seat_purchase_not_available"
+    message = "Buying reserved seats is not available yet."

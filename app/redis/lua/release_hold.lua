@@ -9,6 +9,7 @@
 -- KEYS: 1 = hold:{hold_id}   2 = holds:expiry
 --       3 = inv:{event}:{tier}:avail   4 = uhold:{event}:{user}
 --       5 = holds:confirming
+--       6.. = seat:{event}:{seat_id} for each seat of a reserved-seating hold
 -- ARGV: 1 = hold_id   2 = new status (RELEASED or EXPIRED)
 --       3 = user id that must own the hold ('' = anyone, for the sweeper)
 --       4 = now in ms (only used when ARGV[5] == '1')
@@ -71,6 +72,14 @@ if held - qty > 0 then
   redis.call('DECRBY', KEYS[4], qty)
 else
   redis.call('DEL', KEYS[4])
+end
+
+-- Reserved seating: free each seat, but only if it still points at THIS
+-- hold (a seat key holding another hold's id is not ours to delete).
+for i = 6, #KEYS do
+  if redis.call('GET', KEYS[i]) == ARGV[1] then
+    redis.call('DEL', KEYS[i])
+  end
 end
 
 redis.call('HSET', hold, 'status', ARGV[2])
