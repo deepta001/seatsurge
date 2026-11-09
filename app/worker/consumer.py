@@ -19,7 +19,7 @@ from app.core.job_errors import InvariantViolation, PermanentError
 from app.core.metrics import INVARIANT_VIOLATIONS
 from app.redis.keys import ORDERS_STREAM_KEY
 from app.worker.dead_letters import Compensation, dead_letter
-from app.worker.messages import Handler, parse_message
+from app.worker.messages import Handler, message_scope, parse_message
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +86,30 @@ async def handle_entry(
     PermanentError: retrying can't help, so dead-letter it now. Any other
     error: leave it pending (not acked) to be retried after a delay.
     """
+    with message_scope(entry_id, fields):
+        return await _handle_entry(
+            redis,
+            handlers,
+            compensations,
+            entry_id=entry_id,
+            fields=fields,
+            deliveries=deliveries,
+            stream=stream,
+            group=group,
+        )
+
+
+async def _handle_entry(
+    redis: Redis,
+    handlers: Mapping[str, Handler],
+    compensations: Mapping[str, Compensation],
+    *,
+    entry_id: str,
+    fields: Mapping[str, str],
+    deliveries: int,
+    stream: str,
+    group: str,
+) -> bool:
     try:
         message = parse_message(entry_id, fields)
         handler = handlers.get(message.type)

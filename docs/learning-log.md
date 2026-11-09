@@ -54,6 +54,7 @@ checked. The teach-back for all of them happens at the end.
 - S7.3 Live updates with pub/sub and SSE: built, not checked.
 - S8.1 Three API replicas behind nginx: built, not checked.
 - S8.2 Metrics and the Grafana dashboard: built, not checked.
+- S8.2b Structured logs and the correlation id: built, not checked.
 
 ## Shaky topics
 
@@ -2309,5 +2310,58 @@ reviewable.
 **Key concepts:** counters vs gauges vs histograms, labels and cardinality,
 pull-based scraping, percentiles from buckets, counting once after commit,
 measuring where the user waits.
+
+**Understanding check:** deferred to the end of the project.
+
+## S8.2b: Structured JSON logs and a correlation id from API to worker (2026-11-09)
+
+Split from S8.2 to keep each step reviewable.
+
+**Built:**
+- `app/core/log_setup.py`: every log record (ours and uvicorn's) becomes
+  one JSON line with time, level, logger, `extra` fields and the context's
+  correlation id. New dependency: `structlog` (from the section 2 stack).
+  `LOG_FORMAT=console` for local reading; containers use `json`.
+- `app/core/correlation.py`: the id in a context variable, `correlation_scope`,
+  and the safety check for incoming ids.
+- `app/api/request_context.py`: per request, take nginx's id (or make one),
+  bind it, return it in `X-Correlation-ID`, and write one access line.
+- The 500 handler uses the request's id (body, header and traceback line).
+- Outbox: a `correlation_id` column (migration `1723e7a90bef`), filled
+  automatically from the request; the relay adds it to the stream entry and
+  logs each row under it; the consumer binds it for each entry (first
+  delivery, retries and dead-lettering).
+- nginx: `X-Correlation-ID: $request_id` on every route, and the id at the
+  end of its own access line.
+
+**Tests:** `tests/unit/test_log_setup.py` (12) and
+`tests/integration/test_correlation.py` (5), plus 2 deploy-config checks.
+
+**Ran it:**
+- 343/343 tests passed; ruff, format, mypy and `alembic check` clean.
+- Mutation check, 6 broken versions, all caught: the consumer not binding
+  the id; the relay not sending it; trusting any incoming id; the 500
+  handler making its own id; nginx passing the client's id through; the
+  outbox not recording it.
+- Live, one purchase through nginx (`trace_a_purchase.py`): confirm 202
+  with id `dbed6ab5...`; the same id on the outbox row, on nginx's access
+  line, on api-2's access line and on the worker's "issued tickets" line
+  (with `outbox_id` and `stream_entry`).
+
+**Debugging moments:**
+1. A test said a row created OUTSIDE the scope got the id: SQLAlchemy reads
+   a column default when the INSERT runs (at flush), not when the object is
+   created. That is the behaviour we want (requests create and flush inside
+   their scope); the test now flushes at the right moments.
+2. **Found live:** uvicorn kept writing its own access lines despite
+   `--no-access-log`. uvicorn checks whether `uvicorn.access` "has
+   handlers", and a propagating logger borrows the root's.
+   `configure_logging` now switches that logger off; a unit test checks it.
+3. Compose doesn't restart nginx when its mounted config file changes:
+   `nginx -s reload` after editing `deploy/nginx.conf`.
+
+**Key concepts:** structured logging, correlation ids, context variables in
+async code, carrying context across process boundaries (DB row, stream
+field), log injection.
 
 **Understanding check:** deferred to the end of the project.

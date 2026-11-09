@@ -17,7 +17,7 @@ from redis.asyncio import Redis
 from app.redis.keys import ORDERS_STREAM_KEY
 from app.worker.consumer import ORDERS_GROUP, handle_entry
 from app.worker.dead_letters import Compensation, dead_letter
-from app.worker.messages import Handler
+from app.worker.messages import Handler, message_scope
 
 logger = logging.getLogger(__name__)
 
@@ -74,16 +74,17 @@ async def retry_stuck(
 
         if deliveries > policy.max_deliveries:
             try:
-                await dead_letter(
-                    redis,
-                    compensations,
-                    entry_id=entry_id,
-                    fields=fields,
-                    reason=f"gave up after {deliveries - 1} failed deliveries",
-                    deliveries=deliveries - 1,
-                    stream=stream,
-                    group=group,
-                )
+                with message_scope(entry_id, fields):
+                    await dead_letter(
+                        redis,
+                        compensations,
+                        entry_id=entry_id,
+                        fields=fields,
+                        reason=f"gave up after {deliveries - 1} failed deliveries",
+                        deliveries=deliveries - 1,
+                        stream=stream,
+                        group=group,
+                    )
             except Exception:
                 logger.exception("consumer: could not dead-letter %s; will try again", entry_id)
             continue

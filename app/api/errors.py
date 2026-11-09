@@ -5,12 +5,12 @@ the exception's internal text (CLAUDE.md rule 10).
 """
 
 import logging
-import uuid
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app.core.correlation import correlation_scope, new_correlation_id
 from app.core.errors import DomainError
 
 logger = logging.getLogger(__name__)
@@ -53,14 +53,18 @@ async def handle_unexpected_error(request: Request, error: Exception) -> JSONRes
     The id lets a user's report ("it failed, id 3f2a...") be matched to the
     exact log entry, without the response ever revealing internals (rule 10).
     """
-    correlation_id = uuid.uuid4().hex
-    logger.error(
-        "unexpected error %s on %s %s",
-        correlation_id,
-        request.method,
-        request.url.path,
-        exc_info=error,
-    )
+    # The request's own id (RequestContextMiddleware), so this line and the
+    # request's other log lines share it. This handler runs outside that
+    # middleware, so the id is bound again here for the log line.
+    correlation_id = getattr(request.state, "correlation_id", None) or new_correlation_id()
+    with correlation_scope(correlation_id):
+        logger.error(
+            "unexpected error %s on %s %s",
+            correlation_id,
+            request.method,
+            request.url.path,
+            exc_info=error,
+        )
     return JSONResponse(
         status_code=500,
         content={

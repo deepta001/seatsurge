@@ -15,6 +15,7 @@ from sqlalchemy import BigInteger, DateTime, Index, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.correlation import current_correlation_id
 from app.db.base import Base
 from app.db.models import status_column_type
 
@@ -43,6 +44,11 @@ class OutboxEvent(Base):
     # Which thing it's about, e.g. the order id.
     aggregate_id: Mapped[str] = mapped_column(String(64))
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    # The id of the request that wrote this row (S8.2b), so the relay's and
+    # worker's log lines about it can be matched to that request. Filled in
+    # automatically: the default is read when the row is inserted, inside the
+    # request. NULL for rows written outside one (older rows, scripts).
+    correlation_id: Mapped[str | None] = mapped_column(String(64), default=current_correlation_id)
     status: Mapped[OutboxStatus] = mapped_column(
         status_column_type(OutboxStatus, "outbox_status"),
         default=OutboxStatus.PENDING,

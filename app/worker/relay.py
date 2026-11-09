@@ -20,6 +20,7 @@ from redis.exceptions import TimeoutError as RedisTimeoutError
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.correlation import correlation_scope
 from app.core.job_errors import PermanentError
 from app.db.outbox_models import OutboxEvent, OutboxStatus
 from app.redis.keys import ORDERS_STREAM_KEY
@@ -57,12 +58,16 @@ def stream_fields(row: OutboxEvent) -> dict[str, str]:
     (see `relay_batch`), both copies carry the same id, so the consumer can
     recognise the duplicate even though Redis gives each copy a new entry id.
     """
-    return {
+    fields = {
         "outbox_id": str(row.id),
         "type": row.type,
         "aggregate_id": row.aggregate_id,
         "payload": json.dumps(row.payload),
     }
+    if row.correlation_id is not None:
+        # The request's id rides along, so the worker's log lines carry it too.
+        fields["correlation_id"] = row.correlation_id
+    return fields
 
 
 async def publish(redis: Redis, row: OutboxEvent) -> None:
@@ -131,21 +136,23 @@ async def relay_batch(
 
         published = 0
         for row in rows:
-            try:
-                await publish(redis, row)
-            except (RedisConnectionError, RedisTimeoutError):
-                # Redis itself is unreachable: not this row's fault, so no
-                # attempt is counted (otherwise an outage would kill every
-                # row). Stop the batch; the loop tries again shortly.
-                logger.warning("relay: Redis unreachable; stopping this batch")
-                break
-            except Exception as error:
-                # This row's own problem. It never blocks the rows behind it.
-                record_failure(row, error, policy)
-                continue
-            row.status = OutboxStatus.PUBLISHED
-            row.published_at = func.now()
-            published += 1
+            # Log lines about this row carry the id of the request that wrote it.
+            with correlation_scope(row.correlation_id, outbox_id=row.id):
+                try:
+                    await publish(redis, row)
+                except (RedisConnectionError, RedisTimeoutError):
+                    # Redis itself is unreachable: not this row's fault, so no
+                    # attempt is counted (otherwise an outage would kill every
+                    # row). Stop the batch; the loop tries again shortly.
+                    logger.warning("relay: Redis unreachable; stopping this batch")
+                    break
+                except Exception as error:
+                    # This row's own problem. It never blocks the rows behind it.
+                    record_failure(row, error, policy)
+                    continue
+                row.status = OutboxStatus.PUBLISHED
+                row.published_at = func.now()
+                published += 1
         # Leaving the `begin()` block commits, which also releases the row locks.
     return published
 

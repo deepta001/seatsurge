@@ -66,3 +66,16 @@ def test_database_pools_fit_postgres_connection_limit() -> None:
     worker_processes = 1
     total = per_process * (API_REPLICAS + worker_processes)
     assert total < POSTGRES_MAX_CONNECTIONS  # 15 x 4 = 60 < 100
+
+
+def test_nginx_gives_every_request_its_own_correlation_id_and_logs_it() -> None:
+    # S8.2b: nginx's $request_id replaces any client value, on every route.
+    ids = re.findall(r"proxy_set_header X-Correlation-ID (\S+);", NGINX)
+    assert ids and set(ids) == {"$request_id"}
+    assert NGINX.count("proxy_pass") == len(ids)
+    assert "correlation_id=$request_id" in NGINX  # in nginx's own access log line
+
+
+def test_containers_log_json_and_uvicorn_leaves_access_logs_to_the_app() -> None:
+    assert re.search(r"^\s+LOG_FORMAT: json", COMPOSE, re.M)
+    assert '"--no-access-log"' in DOCKERFILE

@@ -35,4 +35,6 @@ USER appuser
 EXPOSE 8000
 # The default command is the API; the worker and migrate services override it.
 # Proxy settings come from FORWARDED_ALLOW_IPS (see docker-compose.yml).
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+# --no-access-log: the app writes its own access line, in JSON, with the correlation id.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", \
+     "--no-access-log"]

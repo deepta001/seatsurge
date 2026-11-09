@@ -1,10 +1,12 @@
 """The message the worker reads from `stream:orders`, and how raw stream fields become one."""
 
 import json
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
+from app.core.correlation import correlation_scope
 from app.core.job_errors import PermanentError
 
 
@@ -37,3 +39,16 @@ def parse_message(entry_id: str, fields: Mapping[str, str]) -> StreamMessage:
         )
     except (KeyError, ValueError) as error:  # json.JSONDecodeError is a ValueError
         raise PermanentError(f"malformed stream message {entry_id}: {error!r}") from error
+
+
+@contextmanager
+def message_scope(entry_id: str, fields: Mapping[str, str]) -> Iterator[None]:
+    """Log lines while handling this entry carry its request's correlation id (S8.2b).
+
+    Read straight from the raw fields, so even a message too broken to parse
+    is logged with whatever id it has. Older messages simply have none.
+    """
+    with correlation_scope(
+        fields.get("correlation_id"), stream_entry=entry_id, outbox_id=fields.get("outbox_id")
+    ):
+        yield

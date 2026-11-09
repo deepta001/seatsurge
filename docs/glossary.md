@@ -613,3 +613,8 @@ Plain-English meanings of every technical term, with where it first appears.
 | Grafana | Draws dashboards from Prometheus queries. | `deploy/grafana/` |
 | Provisioning | Loading configuration (data sources, dashboards) from files at startup. | `deploy/grafana/provisioning` |
 | Percentile (p50/p95/p99) | The value that 50/95/99 % of observations are at or below. | the latency panel |
+| Structured log | A log line made of named fields (here JSON), so tools can filter and search it. | `app/core/log_setup.py` |
+| Correlation id | One id given to a request and copied onto everything it causes, to find all of it later. | `app/core/correlation.py`, `X-Correlation-ID` |
+| Context variable | A value that follows one request's (or one task's) code, even with many running at once. | `correlation_scope` |
+| Access log | One line per HTTP request: what was asked, the answer, how long it took. | `app/api/request_context.py` |
+| Log injection | Putting crafted text (like a newline) into a log to forge or break entries. | `VALID_ID` |

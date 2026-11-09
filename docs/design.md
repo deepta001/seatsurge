@@ -934,5 +934,37 @@ load test (S8.3).
 - **Grafana is provisioned from the repo** (`deploy/grafana/`): data source
   and dashboard JSON load at startup and can't be edited in the UI, so the
   dashboard is reviewed like code.
-- **Not yet:** structured JSON logs with a correlation id carried
-  API -> outbox row -> worker (S8.2b).
+- Structured JSON logs with a correlation id: see S8.2b below.
+
+### Structured logs and the correlation id (S8.2b)
+- **One JSON object per line:** logs are searched by field
+  (`correlation_id`, `status`, `logger`), which free text can't do
+  reliably. The code keeps using Python's standard `logging`; structlog only
+  formats the output, so nothing else had to change. `LOG_FORMAT=console`
+  gives readable text when developing.
+- **Where the id comes from:** nginx sets `X-Correlation-ID` to its own
+  `$request_id` (replacing any client value) and logs it too. The API keeps
+  an incoming id only if it matches `^[A-Za-z0-9-]{8,64}$`, otherwise makes a
+  new one: a client must not be able to write arbitrary text (quotes,
+  newlines) into the logs.
+- **How it travels:** a context variable (structlog's contextvars) holds it
+  for one request or one message, even while hundreds run at once on the
+  event loop; every log line written meanwhile picks it up. Across process
+  boundaries it is written down: the `outbox_events.correlation_id` column
+  (filled by a column default, read when the INSERT runs inside the request),
+  then a field on the stream entry, then re-bound by the relay (per row) and
+  the consumer (per entry, including retries and the give-up path).
+- **A column, not a payload field:** the payload is the order's business
+  data; the id is about the request that wrote it. As a column it can be
+  queried ("which request wrote this DEAD row?") and old rows stay valid
+  (nullable; adding it is a metadata-only change in Postgres).
+- **One access line per request, written by the app:** with method, path,
+  route template, status, duration and the id. Health checks and `/metrics`
+  are skipped (every few seconds, forever). uvicorn's own access log is off,
+  both by `--no-access-log` and in `configure_logging`, because uvicorn
+  writes access lines whenever its logger has handlers, including ones it
+  borrows from the root by propagating (found live, now a unit test).
+- **The 500 handler runs outside the middleware,** after the request's
+  logging context is gone, so the middleware also leaves the id on
+  `request.state`; the handler re-binds it, so the 500 body, its header, the
+  traceback line and the access line all share one id.

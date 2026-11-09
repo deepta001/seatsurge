@@ -60,6 +60,7 @@ services:
       # redis), not 127.0.0.1. These override the URLs in .env.
       DATABASE_URL: postgresql+asyncpg://seatsurge:${POSTGRES_PASSWORD}@postgres:5432/seatsurge
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      LOG_FORMAT: json  # one JSON object per line (S8.2b)
     depends_on:
       postgres: { condition: service_healthy }
     networks: [backend]

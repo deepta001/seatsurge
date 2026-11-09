@@ -9,10 +9,10 @@ served on WORKER_METRICS_PORT (9100) for Prometheus (S8.2). Run from the project
 """
 
 import asyncio
-import logging
 
 from prometheus_client import start_http_server
 
+from app.core.log_setup import configure_logging
 from app.core.settings import get_settings
 from app.db.session import create_db_engine, create_session_factory
 from app.redis.client import create_redis_client
@@ -25,7 +25,7 @@ from app.worker.sweeper import run_sweeper
 
 
 async def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    configure_logging(get_settings().log_format)
     # The worker has no web server of its own, so prometheus_client serves its
     # metrics from a small background thread on this port.
     start_http_server(get_settings().worker_metrics_port)

@@ -23,6 +23,9 @@ class Settings(BaseSettings):
 
     app_name: str = "seatsurge"
     environment: Literal["local", "test", "production"] = "local"
+    # json: one JSON object per log line (containers, log tools); console:
+    # easier for a human to read while developing (S8.2b).
+    log_format: Literal["json", "console"] = "json"
 
     # No defaults on purpose: the app refuses to start without them, so a
     # password can never be hard-coded in the source (CLAUDE.md section 9).

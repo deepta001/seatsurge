@@ -24,6 +24,8 @@ from app.api.me import router as me_router
 from app.api.metrics import RequestMetricsMiddleware
 from app.api.metrics import router as metrics_router
 from app.api.orders import router as orders_router
+from app.api.request_context import RequestContextMiddleware
+from app.core.log_setup import configure_logging
 from app.core.settings import get_settings
 from app.db.session import create_db_engine, create_session_factory
 from app.redis.client import create_redis_client
@@ -39,6 +41,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     Everything before `yield` runs when the server starts, and everything
     after it runs when the server stops.
     """
+    # JSON logs with the correlation id (S8.2b). Here, not at import time:
+    # uvicorn has set up its own loggers by now, and tests (which don't run
+    # the lifespan) keep pytest's log capture untouched.
+    configure_logging(settings.log_format)
     # None of these connect yet; they only set up pools that connect on first use.
     app.state.db_engine = create_db_engine()
     app.state.session_factory = create_session_factory(app.state.db_engine)
@@ -88,6 +94,9 @@ app.add_middleware(
 app.add_middleware(RequestMetricsMiddleware)
 # Outermost layer: oversized bodies are refused before any route reads them.
 app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_body_bytes)
+# Outside even that: every request, refused or not, gets a correlation id
+# and one access-log line (S8.2b).
+app.add_middleware(RequestContextMiddleware)
 app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(me_router)
