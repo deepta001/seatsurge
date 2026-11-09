@@ -426,3 +426,31 @@ backstops, no hot rows) get their own sections when those parts are built.
   - attempts, `last_error`, exponential backoff and DEAD (S4.2);
   - deleting old PUBLISHED rows;
   - trimming the stream once consumers acknowledge (S4.3+).
+
+### Relay retries, backoff and DEAD (S4.2)
+- **Three kinds of failure, three reactions:**
+
+  | Failure | Example | Reaction |
+  |---|---|---|
+  | Redis unreachable | `ConnectionError`, `TimeoutError` | Stop the batch, count **no** attempt, retry next tick. An outage isn't the row's fault; counting it would turn a 5-minute outage into hundreds of DEAD orders. |
+  | Permanent | `PermanentError` (an unknown event type) | DEAD immediately. Retrying can't help. |
+  | Anything else | Redis rejecting this message | `attempts += 1`, store `last_error`, retry after 1 s, 2 s, 4 s ... (capped at 300 s); DEAD after 8 attempts. |
+
+- **Why exponential backoff:** retrying a failing row every 0.5 s floods the
+  logs and hammers whatever is failing. Doubling the wait gives a quick
+  retry for blips and a slow one for real problems. Jitter (random spread)
+  isn't needed yet, because each row's timer starts when it fails.
+- **Why the database clock:** `next_retry_at = now() + delay` is computed in
+  Postgres, the same clock the relay's `next_retry_at <= now()` query reads.
+  Workers on machines with skewed clocks still agree.
+- **The "alert" is an ERROR log for now;** S8.2 adds a dead-letter metric
+  for Prometheus.
+- **DEAD rows are kept** for an operator to inspect and re-queue (set
+  `status = 'PENDING', attempts = 0`).
+- **Known gap:** an `order.placed` row that goes DEAD leaves its order
+  PENDING, with the seats still taken by the CONFIRMING hold. This needs an
+  operator today. The worker's dead-letter path (S4.6) and reconcile (S5.1)
+  are where that gets handled.
+- **Clean-up:** PUBLISHED rows older than 24 h are deleted, at most 1,000 per
+  call, once a minute, so the table stays small and the relay's queries stay
+  fast. PENDING and DEAD rows are never deleted.

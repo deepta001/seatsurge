@@ -18,8 +18,8 @@ os.environ["DATABASE_URL"] = "postgresql+asyncpg://test:test@127.0.0.1:1/test"
 os.environ["REDIS_URL"] = "redis://:test@127.0.0.1:1/0"
 os.environ["JWT_SECRET_KEY"] = "test-only-signing-key-that-is-at-least-32-chars"
 
-# Shared fixtures for selling seats (the `sale` fixture and helpers).
-pytest_plugins = ["tests.sales"]
+# Shared fixtures: selling seats (`sale` and helpers) and outbox rows (`sessions`).
+pytest_plugins = ["tests.sales", "tests.outbox"]
 
 from collections.abc import AsyncIterator, Iterator  # noqa: E402
 

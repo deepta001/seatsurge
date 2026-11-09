@@ -449,3 +449,13 @@ Plain-English meanings of every technical term, with where it first appears.
 | At-least-once delivery | Every message is delivered, but occasionally more than once, so receivers must handle duplicates. | Publish, then mark PUBLISHED |
 | Batch | Handling up to N items per pass (here 50) instead of one per query. | `BATCH_SIZE` |
 | `asyncio.TaskGroup` | Runs several async tasks at once and waits for all of them. | `app/worker/main.py` |
+
+## Relay retries (S4.2)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| Exponential backoff | Waiting twice as long after each failure (1 s, 2 s, 4 s ...), up to a cap. | `RetryPolicy.delay_after()` |
+| Permanent vs transient failure | Permanent: retrying will fail the same way. Transient: it may work later. | `PermanentError`, `record_failure()` |
+| DEAD (dead letter) | A message given up on after too many failures, kept for a human to look at. | `outbox_events.status` |
+| Poison message | A message that fails every time it's processed; without care it blocks or loops forever. | Test 8 |
+| Retention | How long finished records are kept before deletion (here 24 h for PUBLISHED rows). | `delete_old_published()` |

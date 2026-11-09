@@ -36,6 +36,7 @@ checked. The teach-back for all of them happens at the end.
 - S3.2 Mock payment provider: built, not checked.
 - S3.3 consume_hold.lua and POST /holds/{id}/confirm (tests 2, 3): built, not checked.
 - S4.1 Outbox primer and a basic relay using SKIP LOCKED: built, not checked.
+- S4.2 Relay retries, backoff and the DEAD state (test 8): built, not checked.
 
 ## Shaky topics
 
@@ -1240,5 +1241,57 @@ data plus its outbox, row locks scoped per user, not trusting the client,
 **Key concepts:** the outbox pattern, at-least-once delivery (publish, then
 mark), row locks that skip instead of wait, Redis Streams as an append-only
 log, batch-and-loop background tasks.
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S4.2: Relay retries, backoff and the DEAD state; test 8 (2026-11-09)
+
+**What was built:**
+- `app/core/job_errors.py`: `PermanentError`, for background jobs where a
+  retry can't help.
+- `app/worker/relay.py`:
+  - `RetryPolicy` (8 attempts; 1 s, 2 s, 4 s ... capped at 300 s).
+  - `record_failure` increments `attempts`, stores `last_error` and sets
+    `next_retry_at` from the database clock. On a `PermanentError` or the
+    last attempt, the row goes DEAD and an ERROR log is written as the alert.
+  - An unknown event type raises `PermanentError` (there is no stream to
+    send it to).
+  - **Redis being unreachable counts no attempt:** the batch stops and the
+    loop retries.
+  - `delete_old_published` removes PUBLISHED rows older than 24 h, at most
+    1,000 per call, once a minute.
+- `tests/outbox.py` is a new shared pytest plugin (the `sessions` fixture and
+  the row helpers).
+- Tests:
+  - adversarial test 8 (2 tests);
+  - in `test_outbox_relay.py`, 4 new tests: backoff wait, Redis down costs
+    no attempts, backoff maths, cleanup.
+
+**Ran it:**
+- 205/205 tests passed; ruff and mypy are clean.
+- Mutation check, with four broken versions of the relay, each caught by at
+  least one test:
+  1. unknown types retried instead of DEAD;
+  2. a Redis outage counted against rows;
+  3. no backoff;
+  4. a failing row stopping the batch.
+- The real worker on the dev stack, with a poison row (type `demo.poison`)
+  ahead of a good one: the poison row went DEAD after 1 attempt with
+  `PermanentError: no stream for outbox event type 'demo.poison'`, and the
+  good row was published right after it. Only the demo's two rows and the
+  stream entry were deleted afterwards.
+
+**Debugging moments:**
+1. mypy treats `2 ** (n - 1)` as `Any` (a negative power gives a float), so
+   the backoff uses `2.0 ** (n - 1)`.
+2. The demo's id list picked up psql's "INSERT 0 2" footer, which broke the
+   follow-up SELECT. The worker log had already shown the result; the rows
+   were re-queried by id.
+
+**Key concepts:** retryable vs permanent failures, exponential backoff, a
+dead-letter state, not counting infrastructure outages against messages,
+keeping a log table small.
 
 **Understanding check:** deferred to the end of the project.
