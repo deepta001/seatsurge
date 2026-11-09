@@ -1,17 +1,22 @@
 -- release_hold.lua: give a hold's seats back, EXACTLY once.
 --
--- Used when a user cancels a hold (RELEASED) and by the sweeper when a hold's
--- time is up (EXPIRED). Atomic, and idempotent: the status check means a
--- second call (a retry, or the sweeper racing a user's cancel) changes nothing.
+-- Used when a user cancels a hold (RELEASED), by the sweeper when a hold's
+-- time is up (EXPIRED), and by the worker when an order FAILED (RELEASED,
+-- with ARGV[9] = '1' because that hold is CONFIRMING). Atomic, and
+-- idempotent: the status check means a second call (a retry, or the sweeper
+-- racing a user's cancel) changes nothing.
 --
 -- KEYS: 1 = hold:{hold_id}   2 = holds:expiry
 --       3 = inv:{event}:{tier}:avail   4 = uhold:{event}:{user}
+--       5 = holds:confirming
 -- ARGV: 1 = hold_id   2 = new status (RELEASED or EXPIRED)
 --       3 = user id that must own the hold ('' = anyone, for the sweeper)
 --       4 = now in ms (only used when ARGV[5] == '1')
 --       5 = '1' = only release if the hold has expired (sweeper mode)
 --       6 = event id   7 = tier id   8 = user id   (what the caller read,
 --           re-checked here so KEYS 3 and 4 really belong to this hold)
+--       9 = '1' = also release a CONFIRMING hold (only after its order FAILED
+--           in the database; never used by the API or the sweeper)
 --
 -- Returns:  1 = released now
 --           0 = already finished earlier (no change)
@@ -23,7 +28,8 @@
 local hold = KEYS[1]
 local status = redis.call('HGET', hold, 'status')
 if not status then
-  redis.call('ZREM', KEYS[2], ARGV[1])  -- tidy a stale index entry
+  redis.call('ZREM', KEYS[2], ARGV[1])  -- tidy stale index entries
+  redis.call('ZREM', KEYS[5], ARGV[1])
   return -1
 end
 
@@ -38,8 +44,10 @@ if redis.call('HGET', hold, 'event') ~= ARGV[6]
 end
 
 -- Only a HELD hold gives seats back. RELEASED/EXPIRED already did; a
--- CONFIRMING or CONSUMED hold is being bought (Phase C) and must not be undone.
-if status ~= 'HELD' then
+-- CONSUMED hold became tickets; a CONFIRMING hold is being bought, and is
+-- only released when the caller says its order FAILED (ARGV[9]).
+local releasable = status == 'HELD' or (status == 'CONFIRMING' and ARGV[9] == '1')
+if not releasable then
   redis.call('ZREM', KEYS[2], ARGV[1])
   return 0
 end
@@ -67,4 +75,5 @@ end
 
 redis.call('HSET', hold, 'status', ARGV[2])
 redis.call('ZREM', KEYS[2], ARGV[1])
+redis.call('ZREM', KEYS[5], ARGV[1])
 return 1

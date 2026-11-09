@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from app.db.session import create_session_factory
 from app.redis.keys import ORDERS_STREAM_KEY
 from app.worker.consumer import consume_batch, ensure_group
-from app.worker.handlers import build_handlers
+from app.worker.handlers import build_compensations, build_handlers
 from app.worker.relay import relay_batch
 from tests.sales import stream_messages
 
@@ -86,4 +86,7 @@ async def run_pipeline(sessions: async_sessionmaker[AsyncSession], redis: Redis)
     await relay_batch(sessions, redis)
     await ensure_group(redis)
     handlers = build_handlers(sessions, redis)
-    return await consume_batch(redis, handlers, consumer="test-worker", count=100, block_ms=None)
+    compensations = build_compensations(sessions, redis)
+    return await consume_batch(
+        redis, handlers, compensations, consumer="test-worker", count=100, block_ms=None
+    )

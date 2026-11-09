@@ -19,8 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.db.session import create_db_engine, create_session_factory
 from app.redis.client import create_redis_client
-from app.worker.consumer import Handler, StreamMessage, consume_batch, ensure_group
+from app.worker.consumer import consume_batch, ensure_group
 from app.worker.idempotency import run_once
+from app.worker.messages import Handler, StreamMessage
 
 STREAM = "demo:s4_4:stream"
 GROUP = "demo-workers"

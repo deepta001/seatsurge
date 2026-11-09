@@ -5,7 +5,7 @@ import json
 import pytest
 
 from app.core.job_errors import PermanentError
-from app.worker.consumer import StreamMessage, parse_message
+from app.worker.messages import StreamMessage, parse_message
 
 GOOD = {
     "outbox_id": "7",

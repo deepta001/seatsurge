@@ -20,11 +20,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.core.job_errors import InvariantViolation
-from app.redis.keys import ORDERS_STREAM_KEY, inventory_key
+from app.redis.keys import DEAD_LETTER_STREAM_KEY, ORDERS_STREAM_KEY, inventory_key
 from app.services.payments import MockPaymentProvider
 from app.services.tickets import issue_tickets
 from tests.outbox import run_pipeline
-from tests.sales import Sale, confirm, hold
+from tests.sales import Sale, confirm, hold, stream_messages
 
 CAPACITY = 50  # the `sale` fixture's tier
 
@@ -168,12 +168,16 @@ async def test_a_redis_counter_that_lies_cannot_cause_an_oversell(
     assert await run_pipeline(sessions, redis) == 0  # the worker's backstop refused it
 
     [order] = await query(db_engine, "SELECT status FROM orders")
-    assert order["status"] == "PENDING"  # S4.6 marks it FAILED and gives the seats back
+    assert order["status"] == "FAILED"
     assert await query(db_engine, "SELECT id FROM tickets") == []
     [tier] = await query(db_engine, f"SELECT sold FROM tiers WHERE id = {sale.tier_id}")
     assert tier["sold"] == CAPACITY
-    # Not acked: left pending for S4.6's dead-letter handling, never silently dropped.
-    assert (await redis.xpending(ORDERS_STREAM_KEY, "order-workers"))["pending"] == 1
+    # Dead-lettered at once (retrying can't help), with the reason recorded...
+    [dead] = await stream_messages(redis, DEAD_LETTER_STREAM_KEY)
+    assert dead["dead_reason"].startswith("InvariantViolation")
+    assert (await redis.xpending(ORDERS_STREAM_KEY, "order-workers"))["pending"] == 0
+    # ...and the hold's 2 seats went back to the (wrong) Redis counter: no leak.
+    assert await redis.get(inventory_key(sale.event_id, sale.tier_id)) == "5"
 
 
 async def test_the_ticket_number_index_rejects_a_second_issued_ticket(

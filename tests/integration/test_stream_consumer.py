@@ -7,10 +7,12 @@ from typing import Any
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from app.redis.keys import ORDERS_STREAM_KEY
-from app.worker.consumer import ORDERS_GROUP, StreamMessage, consume_batch, ensure_group
+from app.redis.keys import DEAD_LETTER_STREAM_KEY, ORDERS_STREAM_KEY
+from app.worker.consumer import ORDERS_GROUP, consume_batch, ensure_group
+from app.worker.messages import StreamMessage
 from app.worker.relay import relay_batch
 from tests.outbox import add_rows
+from tests.sales import stream_messages
 
 
 class Recorder:
@@ -74,11 +76,13 @@ async def test_a_failed_message_is_left_pending_and_the_rest_are_acked(redis: Re
 
     assert [m.outbox_id for m in handler.seen] == [1, 3]
     assert await pending(redis) == {"w1": 1}
-    # ">" only hands out never-delivered messages: the failed one waits for S4.6's retry.
+    # ">" only hands out never-delivered messages: the failed one waits for a retry pass.
     assert await consume_batch(redis, {"order.placed": handler}, consumer="w1", block_ms=None) == 0
 
 
-async def test_unknown_types_and_malformed_messages_are_not_acked(redis: Redis) -> None:
+async def test_unknown_types_and_malformed_messages_go_to_the_dead_letter_stream(
+    redis: Redis,
+) -> None:
     await ensure_group(redis)
     await publish(redis, 1, event_type="order.mystery")
     await redis.xadd(ORDERS_STREAM_KEY, {"garbage": "yes"})
@@ -88,7 +92,13 @@ async def test_unknown_types_and_malformed_messages_are_not_acked(redis: Redis) 
     assert await consume_batch(redis, {"order.placed": handler}, consumer="w1", block_ms=None) == 1
 
     assert [m.outbox_id for m in handler.seen] == [3]
-    assert await pending(redis) == {"w1": 2}
+    # Retrying can never fix these (PermanentError), so they're set aside at once...
+    dead = await stream_messages(redis, DEAD_LETTER_STREAM_KEY)
+    assert [d["dead_reason"].split(":")[0] for d in dead] == ["PermanentError", "PermanentError"]
+    assert "order.mystery" in dead[0]["dead_reason"]
+    assert dead[1]["garbage"] == "yes"  # the original fields are kept for a human
+    # ...and acked, so they don't sit in the pending list forever.
+    assert await pending(redis) == {}
 
 
 async def test_consumers_in_one_group_share_the_messages_without_overlap(redis: Redis) -> None:

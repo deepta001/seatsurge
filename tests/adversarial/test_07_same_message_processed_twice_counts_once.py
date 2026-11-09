@@ -16,8 +16,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.redis.keys import ORDERS_STREAM_KEY
 from app.services.payments import MockPaymentProvider
-from app.worker.consumer import StreamMessage, consume_batch, ensure_group
+from app.worker.consumer import consume_batch, ensure_group
 from app.worker.idempotency import run_once
+from app.worker.messages import StreamMessage
 from tests.outbox import run_pipeline
 from tests.sales import Sale, confirm, hold, stream_messages
 

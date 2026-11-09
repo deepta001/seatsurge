@@ -11,7 +11,13 @@ from pathlib import Path
 
 from redis.asyncio import Redis
 
-from app.redis.keys import HOLDS_EXPIRY_KEY, hold_key, inventory_key, user_hold_key
+from app.redis.keys import (
+    HOLDS_CONFIRMING_KEY,
+    HOLDS_EXPIRY_KEY,
+    hold_key,
+    inventory_key,
+    user_hold_key,
+)
 
 LUA_DIR = Path(__file__).parent / "lua"
 # Read once at import, not on every request.
@@ -100,12 +106,15 @@ class ReleaseHoldScript:
         new_status: HoldStatus,
         owner_id: int | None,
         only_if_expired_at_ms: int | None = None,
+        include_confirming: bool = False,
     ) -> ReleaseOutcome:
         """Release one hold.
 
         owner_id: the user who must own it (None = anyone; the sweeper).
         only_if_expired_at_ms: if given, only release if the hold's
         expires_at is at or before this time (the sweeper's "now").
+        include_confirming: also release a CONFIRMING hold. Only for the
+        worker, after the hold's order was marked FAILED in the database.
         """
         # The inventory and per-user keys depend on the hold's own fields, so
         # read them first. The script re-checks them, so a stale read can't
@@ -123,6 +132,7 @@ class ReleaseHoldScript:
             HOLDS_EXPIRY_KEY,
             inventory_key(int(event_id), int(tier_id)),
             user_hold_key(int(event_id), int(user_id)),
+            HOLDS_CONFIRMING_KEY,
         ]
         args: list[str | int] = [
             hold_id,
@@ -133,6 +143,7 @@ class ReleaseHoldScript:
             event_id,
             tier_id,
             user_id,
+            "1" if include_confirming else "0",
         ]
         code = await self._script(keys=keys, args=args)
         return ReleaseOutcome(int(code))

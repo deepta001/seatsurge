@@ -551,3 +551,45 @@ backstops, no hot rows) get their own sections when those parts are built.
 - **When the backstop fires today,** the message stays pending and the
   order PENDING. S4.6 turns that into FAILED, releases the hold and counts
   `invariant_violations_total`.
+
+### Retries, dead letters and releasing a failed order's seats (S4.6)
+- **Typed failures decide what happens (rule 9):**
+
+  | Failure | Reaction |
+  |---|---|
+  | `PermanentError`, including `InvariantViolation`, a malformed message, or an unknown type | Dead-letter at once. Retrying can't help. |
+  | Anything else (`TransientError`, a DB timeout, a bug) | Leave it unacked and retry with backoff (1 s, 2 s, 4 s, 8 s, capped at 60 s). After 5 failed deliveries, dead-letter it. |
+
+- **Retrying uses the pending list itself:** `XPENDING ... IDLE` lists
+  unacknowledged messages with their idle time and delivery count. A message
+  whose backoff has passed is taken over with `XCLAIM ... min_idle_time`;
+  if another worker claimed it a moment earlier, its idle time was reset
+  and Redis refuses the second claim, so only one worker retries it. The
+  same pass rescues messages left by a worker that crashed.
+- **Why XPENDING + XCLAIM rather than XAUTOCLAIM** (which CLAUDE.md
+  suggests): XAUTOCLAIM uses one idle threshold for every message, so it
+  can't give each message its own growing delay. It's a technique choice
+  inside the same design.
+- **A dead letter never leaks seats.** Before a dead `order.placed` is
+  acked, its compensation runs:
+  1. lock the order;
+  2. PENDING becomes FAILED (committed first, rule 6);
+  3. if the order is FAILED, release the hold with `release_hold.lua` in its
+     explicit CONFIRMING mode: seats back to the counter, the user's held
+     count lowered, the hold removed from `holds:confirming`.
+- **A CONFIRMED order is never compensated.** If tickets were issued and
+  only the after-commit Redis step kept failing, the seats are really sold.
+  Releasing them would sell them twice; a test covers exactly this.
+- **Only the worker may release a CONFIRMING hold.** The user's cancel and
+  the sweeper still can't. Cancelling mid-purchase returns 204 and changes
+  nothing (found by a mutation that was first not caught).
+- **Every step can be repeated.** Compensation is idempotent (FAILED stays
+  FAILED; release only acts on CONFIRMING). If dead-lettering crashes
+  before the XACK, the message is still pending and the whole thing runs
+  again. The dead stream may then hold a duplicate, which carries the same
+  `dead_entry_id`.
+- **Not done here:**
+  - refunding a FAILED order's payment (the mock provider is in the API
+    process);
+  - metrics (`invariant_violations_total`, dead-letter count), which come
+    in S8.2. ERROR logs are the alert for now.

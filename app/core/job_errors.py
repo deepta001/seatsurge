@@ -13,6 +13,15 @@ class PermanentError(Exception):
     """
 
 
+class TransientError(Exception):
+    """Might work if tried again later (a database or Redis blip).
+
+    The message is left unacknowledged and retried with growing delays; after
+    too many deliveries it is dead-lettered like a PermanentError. Any other
+    unexpected exception is treated the same way.
+    """
+
+
 class InvariantViolation(PermanentError):
     """A database backstop refused a write that should never have been attempted.
 

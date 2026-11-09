@@ -14,7 +14,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db.outbox_models import ProcessedMessage
-from app.worker.consumer import Handler, StreamMessage
+from app.worker.messages import Handler, StreamMessage
 
 logger = logging.getLogger(__name__)
 

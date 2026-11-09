@@ -273,3 +273,23 @@ async def test_the_relay_publishes_a_confirmed_order_to_the_stream(
     assert (payload["order_id"], payload["hold_id"], payload["quantity"]) == (order_id, held, 3)
     [event] = await rows(db_engine, "SELECT status FROM outbox_events")
     assert event["status"] == "PUBLISHED"
+
+
+async def test_cancelling_a_hold_while_it_is_being_bought_gives_nothing_back(
+    client: AsyncClient,
+    redis: Redis,
+    sale: Sale,
+    buyers: list[int],
+    payments: MockPaymentProvider,
+    held: str,
+) -> None:
+    assert (await confirm(client, held, buyers[0])).status_code == 202
+
+    cancelled = await client.delete(f"/holds/{held}", headers=bearer(buyers[0]))
+
+    # 204 (the call is harmless) but nothing changes: the order is still being
+    # fulfilled, so its seats must not go back on sale. Only the worker may
+    # release a CONFIRMING hold, and only after its order FAILED.
+    assert cancelled.status_code == 204
+    assert await hold_state(redis, held) == ("CONFIRMING", False, True)
+    assert await redis.get(inventory_key(sale.event_id, sale.tier_id)) == "47"

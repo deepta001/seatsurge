@@ -40,6 +40,7 @@ checked. The teach-back for all of them happens at the end.
 - S4.3 Redis Streams primer; a consumer-group reader: built, not checked.
 - S4.4 Idempotent processing (test 7) and the process-twice demo: built, not checked.
 - S4.5 Ticket issuing with the DB backstop (test 4) and the unique-constraint demo: built, not checked.
+- S4.6 Typed errors, retries, dead letters and inventory release (test 9): built, not checked.
 
 ## Shaky topics
 
@@ -1466,5 +1467,81 @@ de-duplication key.
 row locks serialising writers on one row, defence in depth (Lua, then the
 UPDATE condition, then the CHECK constraint, then the unique index),
 after-commit side effects that must be idempotent.
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S4.6: Typed errors, retries, dead letters and inventory release; test 9 (2026-11-09)
+
+**What was built:**
+- `TransientError` in `app/core/job_errors.py`, beside `PermanentError` and
+  `InvariantViolation`.
+- `app/worker/messages.py`: `StreamMessage`, `Handler` and `parse_message`,
+  moved out of `consumer.py` to avoid a circular import.
+- `app/worker/consumer.py`, `handle_entry`:
+  - success: XACK;
+  - `PermanentError`: dead-letter at once;
+  - anything else: leave pending.
+- `app/worker/dead_letters.py`: compensate, then XADD to
+  `stream:orders:dead` (original fields, plus `dead_reason`, `deliveries`
+  and `dead_entry_id`), then XACK. Each step is safe to repeat.
+- `app/worker/retries.py`: `RedeliveryPolicy` (backoff 1 s, 2 s, 4 s ...
+  capped at 60 s; dead-letter after 5 failed deliveries) and `retry_stuck`
+  (XPENDING with IDLE, then XCLAIM with `min_idle_time`, then handle or
+  dead-letter). It also rescues messages held by a crashed worker.
+- `app/worker/consumer_loop.py`: `run_consumer` now does
+  `consume_batch` + `retry_stuck` on every pass.
+- `handlers.py`: the `order.placed` compensation. It locks the order; if it
+  is PENDING it becomes FAILED, and if it is FAILED the hold is released.
+  A CONFIRMED order keeps its seats.
+- `release_hold.lua` gained an explicit mode (ARGV[9]) to release a
+  CONFIRMING hold, used only by that compensation, and now also removes the
+  hold from `holds:confirming`.
+- Tests:
+  - adversarial test 9 (7 tests);
+  - a new confirm test: cancelling a hold mid-purchase gives nothing back;
+  - test 4 now expects FAILED plus seats back;
+  - the S4.3 test now expects unknown and malformed messages in the dead
+    stream.
+
+**Ran it:**
+- 239/239 tests passed; ruff and mypy are clean.
+- Mutation check, with four broken versions:
+  1. releasing seats of an order that has tickets: caught;
+  2. dead-lettering without compensating: caught (tests 4 and 9);
+  3. giving up after the first failure: caught (3 tests);
+  4. the Lua releasing any CONFIRMING hold: **not caught at first**. That
+     gap meant a user could cancel mid-purchase and put sold seats back on
+     sale. A test was added, and the mutation is now caught.
+- Live, with the real API and worker:
+  - setup: the tier is sold out in Postgres, but the Redis counter says 5
+    are free;
+  - hold 201, then confirm 202;
+  - the worker's backstop refused the order and it was dead-lettered
+    ("InvariantViolation: tier 22 has no room ...", deliveries 1);
+  - the order was **FAILED about 500 ms later**, with no tickets and sold
+    still 10/10;
+  - the hold was RELEASED, the user's held count cleared, and the counter
+    was back at 5 (no leak).
+  - Only the demo's own rows, stream and dead-letter entries and keys were
+    deleted.
+
+**Debugging moments:**
+1. A circular import (consumer -> dead_letters -> consumer) was avoided by
+   moving the message types into `messages.py`.
+2. Two mistakes in my first test draft: a 50-seat hold (the API correctly
+   refused it with 422, since the limit is 10 per hold), and reading
+   `issue_tickets` through a module mypy doesn't treat as exporting it.
+3. The uncaught mutation above, which found a real missing test.
+
+**Known limitation:** a FAILED order's payment isn't refunded by the worker.
+The mock provider lives in the API process; a real provider would be called
+here.
+
+**Key concepts:** transient vs permanent failures, redelivery with
+backoff, the pending entries list as a retry queue, XCLAIM with
+`min_idle_time` as a safe takeover, dead-letter queues, compensating
+actions after a commit.
 
 **Understanding check:** deferred to the end of the project.

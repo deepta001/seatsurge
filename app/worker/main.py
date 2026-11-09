@@ -11,8 +11,8 @@ import logging
 
 from app.db.session import create_db_engine, create_session_factory
 from app.redis.client import create_redis_client
-from app.worker.consumer import run_consumer
-from app.worker.handlers import build_handlers
+from app.worker.consumer_loop import run_consumer
+from app.worker.handlers import build_compensations, build_handlers
 from app.worker.relay import run_relay
 from app.worker.sweeper import run_sweeper
 
@@ -28,7 +28,9 @@ async def main() -> None:
         async with asyncio.TaskGroup() as tasks:
             tasks.create_task(run_sweeper(redis))
             tasks.create_task(run_relay(session_factory, redis))
-            tasks.create_task(run_consumer(redis, build_handlers(session_factory, redis)))
+            handlers = build_handlers(session_factory, redis)
+            compensations = build_compensations(session_factory, redis)
+            tasks.create_task(run_consumer(redis, handlers, compensations))
     finally:
         await engine.dispose()
         await redis.aclose()

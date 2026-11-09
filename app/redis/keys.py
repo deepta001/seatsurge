@@ -11,6 +11,8 @@ HOLDS_EXPIRY_KEY = "holds:expiry"
 HOLDS_CONFIRMING_KEY = "holds:confirming"
 # The Redis Stream the outbox relay publishes order events to; the worker reads it.
 ORDERS_STREAM_KEY = "stream:orders"
+# Messages the worker gave up on, kept for a human to inspect.
+DEAD_LETTER_STREAM_KEY = "stream:orders:dead"
 
 
 def inventory_key(event_id: int, tier_id: int) -> str:

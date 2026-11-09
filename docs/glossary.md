@@ -492,3 +492,15 @@ Plain-English meanings of every technical term, with where it first appears.
 | Defence in depth | Several independent layers, so one failing doesn't cause damage. | Lua, then UPDATE, then CHECK, then unique index |
 | After-commit step | Work outside the database done only once the commit succeeded. | `finish_hold.lua`, `after_commit` |
 | CONSUMED | Final hold status: its seats became tickets. | `finish_hold.lua` |
+
+## Retries and dead letters (S4.6)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| Transient error | A failure that may go away if you try later. | `TransientError`, any non-permanent exception |
+| Redelivery | Handing an unacknowledged message to a worker again. | `retry_stuck()` |
+| `XPENDING` (with IDLE) | Lists unacknowledged entries with idle time and delivery count. | `retry_stuck()` |
+| `XCLAIM` | Takes over a pending entry for another consumer; `min_idle_time` stops two workers grabbing it at once. | `retry_stuck()` |
+| Dead-letter queue | Where messages go when the system gives up on them, for a human to look at. | `stream:orders:dead` |
+| Compensation | Undoing earlier steps when a process can't finish (fail the order, release the seats). | `fail_order_and_release_hold()` |
+| FAILED | Order status: it could not be fulfilled and its seats were given back. | `orders.status` |
