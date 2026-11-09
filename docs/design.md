@@ -323,3 +323,26 @@ backstops, no hot rows) get their own sections when those parts are built.
   arrive with reserved seating (S6.1).
 - `outbox_events` and `processed_messages` are added where first used (S3.3,
   S4.4).
+
+### The mock payment provider (S3.2)
+- **Constraint:** CLAUDE.md section 9 forbids test/simulation endpoints in
+  the app, so there is no `/payments` route (a test asserts this).
+- **Chosen:** copy real providers. The client obtains a token from the
+  provider (in test mode, fixed tokens), and the server charges it.
+  `MockPaymentProvider` lives in-process, created once at startup
+  (`app.state.payments`, `get_payments` dependency):
+  - `tok_ok` succeeds (unless declined at random by `PAYMENT_FAILURE_RATE`).
+  - `tok_declined` gives 402 `payment_declined`.
+  - `tok_unavailable` gives 503 `payment_unavailable` + Retry-After
+    (temporary).
+  - Anything else gives 422 `invalid_payment_token`, so a raw card number is
+    never accepted.
+- **Idempotent charges** per key (same key + same amount returns the first
+  charge; a different amount is an error), and `refund()` for when our own
+  write fails after charging (used in S3.3).
+- **Seeded randomness** (`random.Random(seed)`) makes declines repeatable in
+  tests: seed 7 at 30% gave the same count on two runs, within 250-350 of
+  1,000.
+- **Limits of a mock:** charges live in process memory (lost on restart, not
+  shared between replicas). That's fine, because the order in Postgres, not
+  the mock, is the record of a purchase.

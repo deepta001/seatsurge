@@ -411,3 +411,14 @@ Plain-English meanings of every technical term, with where it first appears.
 | Ticket | One issued admission, with a unique number in its tier (and a seat, for reserved seating). | `tickets` table |
 | Partial unique index | A uniqueness rule that only applies to rows matching a condition (e.g. `status = 'ISSUED'`). | `uq_tickets_issued_seat`, `uq_tickets_issued_number` |
 | UUID primary key | A random 128-bit id instead of 1, 2, 3...; unguessable and safe to show in URLs. | `orders.id` |
+
+## Mock payments (S3.2)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| Payment provider | A company that moves money (e.g. Stripe); here a fake in-process stand-in. | `MockPaymentProvider` |
+| Payment token | An opaque string standing for a card, issued by the provider; our server never sees card numbers. | `tok_ok`, `tok_declined`, `tok_unavailable` |
+| Charge / refund | Take money for a token / give it back. | `charge()`, `refund()` |
+| 402 Payment Required | The HTTP status for "the payment didn't go through". | `PaymentDeclined` |
+| Mock / test double | A stand-in for a real dependency that behaves predictably in tests. | The whole `payments.py` |
+| Failure injection | Deliberately making a dependency fail some of the time, to test the failure paths. | `PAYMENT_FAILURE_RATE` |

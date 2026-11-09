@@ -20,6 +20,7 @@ from app.api.me import router as me_router
 from app.core.settings import get_settings
 from app.db.session import create_db_engine, create_session_factory
 from app.redis.client import create_redis_client
+from app.services.payments import MockPaymentProvider
 
 settings = get_settings()
 
@@ -35,6 +36,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.db_engine = create_db_engine()
     app.state.session_factory = create_session_factory(app.state.db_engine)
     app.state.redis = create_redis_client()
+    # A mock: there are no real payments in this project (CLAUDE.md section 2).
+    app.state.payments = MockPaymentProvider(failure_rate=settings.payment_failure_rate)
     yield
     await app.state.redis.aclose()
     await app.state.db_engine.dispose()

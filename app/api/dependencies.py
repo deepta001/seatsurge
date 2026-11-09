@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from app.core.errors import Forbidden, NotAuthenticated
 from app.core.tokens import AccessTokenClaims, decode_access_token
 from app.db.models import UserRole
+from app.services.payments import MockPaymentProvider
 
 # Reads "Authorization: Bearer <token>". auto_error=False lets us raise our own
 # typed error, and it also adds the "Authorize" button to /docs.
@@ -67,3 +68,9 @@ def require_admin(
     if current_user.role != UserRole.ADMIN:
         raise Forbidden()
     return current_user
+
+
+def get_payments(request: Request) -> MockPaymentProvider:
+    """The payment provider created at startup (a mock; see app/services/payments.py)."""
+    payments: MockPaymentProvider = request.app.state.payments
+    return payments

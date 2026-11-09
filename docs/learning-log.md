@@ -33,6 +33,7 @@ checked. The teach-back for all of them happens at the end.
 - S2.8 Missing counter rehydrated, never zero (test 12): built, not checked.
 - S2.9 Concurrency test 1 and 3-process demo: built, not checked.
 - S3.1 Transactions primer; orders and tickets tables: built, not checked.
+- S3.2 Mock payment provider: built, not checked.
 
 ## Shaky topics
 
@@ -1092,5 +1093,39 @@ purchase cap need them (recorded in `docs/design.md`).
 
 **Key concepts:** transactions and ACID, commit and rollback, savepoints,
 UUID primary keys, partial unique indexes, NULLs in unique indexes.
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S3.2: The mock payment step (2026-11-09)
+
+**What was built:**
+- `app/services/payments.py`: `MockPaymentProvider` with test tokens
+  (`tok_ok`, `tok_declined`, `tok_unavailable`), a configurable
+  `failure_rate`, an injectable `random.Random`, idempotent `charge()` per
+  key, and `refund()`.
+- Errors: InvalidPaymentToken 422, PaymentDeclined 402, and
+  PaymentUnavailable 503 with Retry-After.
+- Setting `payment_failure_rate` (default 0.0), plus `.env.example`.
+- `app/main.py` creates one provider at startup; `get_payments` dependency.
+- `tests/unit/test_payments.py` (12): tokens, typed errors, idempotency,
+  0%/100% rates, the seeded 30% rate (repeatable, 250-350 of 1,000),
+  refunds, and "no payment route exists" (checked via the OpenAPI schema).
+
+**Ran it:**
+- 169/169 tests passed; ruff and mypy are clean.
+
+**Design point:** section 9 forbids simulation endpoints, so the mock is a
+server-side class that copies how real providers work (the client gets a
+token, the server charges it), not a fake HTTP route.
+
+**Small fix:** the test first read `app.routes`, but this FastAPI version
+keeps included routers as `_IncludedRouter` objects. It now reads the
+OpenAPI schema, the public list of routes.
+
+**Key concepts:** payment tokens vs card numbers, charge then refund,
+idempotent external calls, 402 Payment Required, seeded randomness, test
+doubles (mocks).
 
 **Understanding check:** deferred to the end of the project.

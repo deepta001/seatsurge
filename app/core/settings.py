@@ -40,6 +40,11 @@ class Settings(BaseSettings):
     # The most seats one user may hold at once for one event.
     hold_user_cap: int = Field(default=10, ge=1, le=100)
 
+    # Mock payments only (there are no real payments in this project): the
+    # chance that a valid "tok_ok" charge is randomly declined, for testing
+    # failure paths. 0.0 = never, 1.0 = always.
+    payment_failure_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+
     # The largest request body the API will read. Every real request here is a
     # few hundred bytes; anything bigger is a mistake or an attack.
     max_request_body_bytes: int = Field(default=16 * 1024, ge=1024, le=1024 * 1024)

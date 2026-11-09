@@ -129,3 +129,25 @@ class HoldNotFound(DomainError):
     status_code = 404
     code = "hold_not_found"
     message = "No hold with that id."
+
+
+class InvalidPaymentToken(DomainError):
+    status_code = 422
+    code = "invalid_payment_token"
+    message = "That payment token isn't valid."
+
+
+class PaymentDeclined(DomainError):
+    # 402 Payment Required: the standard status for "the payment didn't go through".
+    status_code = 402
+    code = "payment_declined"
+    message = "The payment was declined."
+
+
+class PaymentUnavailable(DomainError):
+    """The payment provider couldn't be reached. Temporary: retrying may work."""
+
+    status_code = 503
+    code = "payment_unavailable"
+    message = "Payments are temporarily unavailable. Please try again shortly."
+    headers = {"Retry-After": "2"}
