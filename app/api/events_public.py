@@ -1,4 +1,4 @@
-"""Public event routes (no login): GET /events and GET /events/{id}.
+"""Public event routes (no login): GET /events, GET /events/{id}, GET /events/{id}/seats.
 
 These use their own response models, so admin-only details (such as which
 admin created an event) are never exposed (CLAUDE.md section 8).
@@ -8,11 +8,13 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import get_db_session
+from app.api.dependencies import get_db_session, get_redis
 from app.db.models import Event, EventStatus, SeatingType
 from app.services.events import get_public_event, list_upcoming_events
+from app.services.seat_map import SeatState, get_seat_map
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -102,3 +104,41 @@ async def read_event(event_id: int, session: AsyncSession = Depends(get_db_sessi
             for t in result.tiers
         ],
     )
+
+
+class SeatEntry(BaseModel):
+    """One seat. label and tier_id only appear with ?layout=true."""
+
+    seat_id: int
+    state: SeatState
+    tier_id: int | None = None
+    label: str | None = None
+
+
+class SeatMap(BaseModel):
+    event_id: int
+    seats: list[SeatEntry]
+
+
+@router.get("/{event_id}/seats", response_model_exclude_none=True)
+async def read_seat_map(
+    event_id: int,
+    layout: bool = Query(default=False, description="Also include each seat's label and tier"),
+    session: AsyncSession = Depends(get_db_session),
+    redis: Redis = Depends(get_redis),
+) -> SeatMap:
+    """Every seat of a reserved-seating event and its state: AVAILABLE, HELD or SOLD.
+
+    Compact by default ({seat_id, state}), because clients poll it during a
+    rush. The layout (label, tier) never changes, so fetch it once with
+    ?layout=true. Drafts are 404; general-admission events are 422.
+    """
+    seats = await get_seat_map(session, redis, event_id)
+    if layout:
+        entries = [
+            SeatEntry(seat_id=s.seat_id, state=s.state, tier_id=s.tier_id, label=s.label)
+            for s in seats
+        ]
+    else:
+        entries = [SeatEntry(seat_id=s.seat_id, state=s.state) for s in seats]
+    return SeatMap(event_id=event_id, seats=entries)

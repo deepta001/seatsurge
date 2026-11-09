@@ -17,6 +17,7 @@ class Ids:
     other_user: int
     event: int
     tier: int
+    seat: int
 
 
 @pytest.fixture
@@ -49,10 +50,18 @@ async def ids(db_engine: AsyncEngine) -> AsyncIterator[Ids]:
             ),
             {"e": event},
         )
-    yield Ids(int(user), int(other), int(event), int(tier))
+        # A real seat: tickets.seat_id is a foreign key to seats (S6.1).
+        seat = await conn.scalar(
+            text(
+                "INSERT INTO seats (event_id, tier_id, label) VALUES (:e, :t, 'Floor-42') "
+                "RETURNING id"
+            ),
+            {"e": event, "t": tier},
+        )
+    yield Ids(int(user), int(other), int(event), int(tier), int(seat))
     async with db_engine.begin() as conn:
         await conn.execute(
-            text("TRUNCATE users, events, tiers, orders, tickets RESTART IDENTITY CASCADE")
+            text("TRUNCATE users, events, tiers, seats, orders, tickets RESTART IDENTITY CASCADE")
         )
 
 
@@ -165,9 +174,9 @@ async def test_a_ticket_number_can_be_issued_only_once_per_tier(
 async def test_a_seat_can_have_only_one_issued_ticket(db_engine: AsyncEngine, ids: Ids) -> None:
     async with db_engine.begin() as conn:
         order_id = await add_order(conn, ids)
-        await add_ticket(conn, ids, order_id, number=1, seat=42)
+        await add_ticket(conn, ids, order_id, number=1, seat=ids.seat)
 
-    duplicate = await violated(db_engine, lambda c: add_ticket(c, ids, order_id, 2, seat=42))
+    duplicate = await violated(db_engine, lambda c: add_ticket(c, ids, order_id, 2, seat=ids.seat))
 
     assert duplicate == "uq_tickets_issued_seat"
 
@@ -175,10 +184,12 @@ async def test_a_seat_can_have_only_one_issued_ticket(db_engine: AsyncEngine, id
 async def test_cancelled_tickets_do_not_block_a_seat(db_engine: AsyncEngine, ids: Ids) -> None:
     async with db_engine.begin() as conn:
         order_id = await add_order(conn, ids)
-        await add_ticket(conn, ids, order_id, number=1, seat=42, status="CANCELLED")
+        await add_ticket(conn, ids, order_id, number=1, seat=ids.seat, status="CANCELLED")
 
     # "Partial" index: only ISSUED tickets count, so the seat can be sold again.
-    assert await violated(db_engine, lambda c: add_ticket(c, ids, order_id, 2, seat=42)) is None
+    assert (
+        await violated(db_engine, lambda c: add_ticket(c, ids, order_id, 2, seat=ids.seat)) is None
+    )
 
 
 async def test_general_admission_tickets_without_seats_never_clash(
@@ -200,3 +211,14 @@ async def test_ticket_numbers_must_be_positive(db_engine: AsyncEngine, ids: Ids)
     assert await violated(db_engine, lambda c: add_ticket(c, ids, order_id, number=0)) == (
         "ck_tickets_ticket_number_positive"
     )
+
+
+async def test_a_ticket_cannot_point_at_a_seat_that_does_not_exist(
+    db_engine: AsyncEngine, ids: Ids
+) -> None:
+    async with db_engine.begin() as conn:
+        order_id = await add_order(conn, ids)
+
+    made_up_seat = await violated(db_engine, lambda c: add_ticket(c, ids, order_id, 1, seat=999999))
+
+    assert made_up_seat == "fk_tickets_seat_id_seats"

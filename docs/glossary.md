@@ -539,3 +539,13 @@ Plain-English meanings of every technical term, with where it first appears.
 | CANCELLED | Order and ticket status after a cancel; the seats are free again, the numbers stay used. | `cancel_order()` |
 | Marker key | A small Redis key that records "this was done", so a repeated step can tell and skip. | `returned:{order_id}` |
 | Forced interleaving | A test that pauses one operation at a chosen point until another catches up, so a race happens every run. | Test 13 |
+
+## Reserved seating (S6.1)
+
+| Term | Meaning | Where it appears |
+|---|---|---|
+| Reserved seating | Every ticket is for a specific seat, chosen by the buyer. | `SeatingType.RESERVED`, `seats` table |
+| General admission | Tickets are for a tier only; no specific seat. | `SeatingType.GENERAL_ADMISSION` |
+| Seat map | The list of an event's seats and whether each is free, held or sold. | `GET /events/{id}/seats` |
+| Foreign key | A column that must match an existing row in another table. | `tickets.seat_id -> seats.id` |
+| `MGET` | Redis: read many keys in one round trip. | `held_seat_ids()` |

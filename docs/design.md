@@ -688,3 +688,22 @@ recovers:
     message arrives. That would return the seats twice to the Redis gate
     (the database backstop still prevents an oversell, and reconcile
     corrects the counter).
+
+### Reserved seating: seats and the seat map (S6.1)
+- **Seats are rows,** created with the event in the same transaction, one
+  per unit of each tier's capacity, labelled `<tier>-<n>`. `UNIQUE(event_id,
+  label)` keeps labels distinct; `tickets.seat_id` is a foreign key, so a
+  ticket can never name a seat that doesn't exist.
+- **The cap of 5,000 seats per reserved event** keeps the seat table, the
+  seat map response and (S6.2) the per-seat Lua checks small. General
+  admission has no seat rows and keeps the 100,000-per-tier limit.
+- **A seat's state comes from where each fact lives:** SOLD from Postgres
+  (an ISSUED ticket; the source of truth), HELD from Redis (a live hold's
+  `seat:{event}:{seat_id}` key), otherwise AVAILABLE. If Redis is flushed,
+  held seats show AVAILABLE, which matches the fact that those holds are
+  gone (S5.2).
+- **A compact response for a hot endpoint:** clients poll the seat map
+  during a rush, so it returns only `{seat_id, state}`. The layout (label,
+  tier) never changes, so `?layout=true` returns it once.
+- **Not yet:** tiers still can't be edited after creation, so the seat
+  layout can't change either; nothing writes seat keys until S6.2.

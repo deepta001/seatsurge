@@ -45,6 +45,7 @@ checked. The teach-back for all of them happens at the end.
 - S5.1 Reconcile logic and the admin endpoint: built, not checked.
 - S5.2 Flushing Redis mid-sale and recovering (test 11): built, not checked.
 - S5.3 Cancellation through the outbox (test 13): built, not checked.
+- S6.1 Reserved seating: data model and seat-map endpoint: built, not checked.
 
 ## Shaky topics
 
@@ -1773,5 +1774,57 @@ PENDING order isn't supported.
 **Key concepts:** compensating a completed purchase, never reusing
 identifiers, idempotent side effects with a marker key, forcing a race in a
 test instead of hoping for it.
+
+**Understanding check:** deferred to the end of the project.
+
+---
+
+## S6.1: Reserved seating: data model and seat-map endpoint (2026-11-09)
+
+**What was built:**
+- `app/db/seat_models.py`: `seats(id, event_id, tier_id, label)` with
+  `UNIQUE(event_id, label)`. `tickets.seat_id` now has a foreign key to
+  `seats`. Migration `4ffa87300bfc`.
+- Creating a RESERVED event creates one seat per unit of each tier's
+  capacity, labelled `<tier>-<n>` (e.g. `Stalls-1`), in the same
+  transaction. At most 5,000 seats per reserved event (422 above that).
+  Deleting a draft deletes its seats first.
+- `app/services/seat_map.py` plus `GET /events/{id}/seats`:
+  - SOLD = an ISSUED ticket in Postgres;
+  - HELD = a `seat:{event}:{seat_id}` key in Redis (read with MGET in
+    chunks of 1,000; written by S6.2);
+  - otherwise AVAILABLE.
+  - It returns `{seat_id, state}` only; `?layout=true` adds `label` and
+    `tier_id`. Drafts and unknown events are 404; general-admission events
+    are 422 `no_seat_map`.
+- Tests: `tests/integration/test_seat_map.py` (6), plus a foreign-key test
+  in `test_order_tables.py`.
+
+**Ran it:**
+- 265/265 tests passed; ruff, mypy and `alembic check` are clean; the
+  migration's downgrade and re-upgrade were tried on the dev DB.
+- Mutation check, with three broken versions, each caught:
+  1. no size cap;
+  2. seats not deleted with a draft;
+  3. cancelled tickets counted as sold.
+- Live against the API:
+  - a reserved event (Stalls x3, Circle x2) was created with 201;
+  - its seat map while DRAFT gave 404;
+  - after publishing, `?layout=true` listed Stalls-1..3 and Circle-1..2;
+  - with one seat key set by hand (S6.2 will do it for real), the compact
+    map showed seat 2 as HELD;
+  - a 5,001-seat reserved event gave 422.
+  - Only the demo's data was deleted.
+
+**Debugging moments:**
+1. Two S3.1 tests used a made-up `seat_id` (42), which the new foreign key
+   rejected. They now use a real seat row, and a new test checks that the
+   key refuses made-up seats.
+2. Importing another test file's `admin` fixture clashed with the `sale`
+   fixture's admin user; the test now makes a token for the sale's admin.
+
+**Key concepts:** modelling physical seats, foreign keys as guards, deriving
+a view's state from where each truth lives (Postgres for sold, Redis for
+held), compact responses for hot endpoints.
 
 **Understanding check:** deferred to the end of the project.

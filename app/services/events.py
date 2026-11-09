@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import EventNotDeletable, EventNotFound, InvalidEventStatusChange
 from app.db.models import Event, EventStatus, SeatingType, Tier
+from app.db.seat_models import Seat
 
 # Events only move forward. CANCELLED is final, and nothing returns to DRAFT.
 ALLOWED_STATUS_CHANGES: dict[EventStatus, set[EventStatus]] = {
@@ -77,8 +78,23 @@ async def create_event(
         for t in tiers
     ]
     session.add_all(tier_rows)
+    if seating == SeatingType.RESERVED:
+        await session.flush()  # tier ids are needed for the seats
+        session.add_all(seats_for(event.id, tier_rows))
     await session.commit()
     return EventWithTiers(event=event, tiers=tier_rows)
+
+
+def seats_for(event_id: int, tiers: list[Tier]) -> list[Seat]:
+    """One seat per unit of each tier's capacity, labelled "<tier name>-<n>".
+
+    Tier names are unique within an event, so the labels are too.
+    """
+    return [
+        Seat(event_id=event_id, tier_id=tier.id, label=f"{tier.name}-{number}")
+        for tier in tiers
+        for number in range(1, tier.capacity + 1)
+    ]
 
 
 async def update_event(
@@ -107,11 +123,12 @@ async def update_event(
 
 
 async def delete_event(session: AsyncSession, event_id: int) -> None:
-    """Delete a DRAFT event and its tiers. Published events must be cancelled instead."""
+    """Delete a DRAFT event, its tiers and seats. Published events must be cancelled instead."""
     event = await _get_locked(session, event_id)
     if event.status != EventStatus.DRAFT:
         raise EventNotDeletable()
-    # Tiers first: the foreign key refuses to leave tiers pointing at nothing.
+    # Children first: foreign keys refuse to leave rows pointing at nothing.
+    await session.execute(delete(Seat).where(Seat.event_id == event.id))
     await session.execute(delete(Tier).where(Tier.event_id == event.id))
     await session.delete(event)
     await session.commit()

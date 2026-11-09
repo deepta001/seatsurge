@@ -4,4 +4,4 @@ Importing this package registers every table on Base.metadata, so Alembic and
 the tests always see the complete schema.
 """
 
-from app.db import models, order_models, outbox_models  # noqa: F401
+from app.db import models, order_models, outbox_models, seat_models  # noqa: F401

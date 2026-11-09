@@ -97,8 +97,8 @@ class Ticket(Base):
     order_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orders.id"), index=True)
     event_id: Mapped[int] = mapped_column(ForeignKey("events.id"))
     tier_id: Mapped[int] = mapped_column(ForeignKey("tiers.id"))
-    # Reserved seating only (Phase D adds the seats table and its foreign key).
-    seat_id: Mapped[int | None]
+    # Reserved seating only; NULL for general admission.
+    seat_id: Mapped[int | None] = mapped_column(ForeignKey("seats.id"))
     ticket_number: Mapped[int]
     status: Mapped[TicketStatus] = mapped_column(
         status_column_type(TicketStatus, "ticket_status"),

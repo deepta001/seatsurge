@@ -24,6 +24,9 @@ from app.services.events import (
 
 router = APIRouter(prefix="/events", tags=["events"])
 
+# One seat row per seat, and every seat appears in the seat map (S6.1).
+MAX_RESERVED_SEATS = 5_000
+
 
 def must_be_in_the_future(value: datetime | None) -> datetime | None:
     if value is not None and value <= datetime.now(UTC):
@@ -52,6 +55,17 @@ class EventCreate(BaseModel):
     tiers: list[TierIn] = Field(min_length=1, max_length=20)
 
     _starts_in_future = field_validator("starts_at")(must_be_in_the_future)
+
+    @model_validator(mode="after")
+    def reserved_seating_is_not_too_big(self) -> Self:
+        # Every reserved seat is a row and appears in the seat map; keep both small.
+        if self.seating == SeatingType.RESERVED:
+            total = sum(t.capacity for t in self.tiers)
+            if total > MAX_RESERVED_SEATS:
+                raise ValueError(
+                    f"a reserved-seating event can have at most {MAX_RESERVED_SEATS} seats"
+                )
+        return self
 
     @field_validator("tiers")
     @classmethod

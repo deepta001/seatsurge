@@ -184,3 +184,9 @@ class OrderNotCancellable(DomainError):
     status_code = 409
     code = "order_not_cancellable"
     message = "Only an order with issued tickets can be cancelled."
+
+
+class NoSeatMap(DomainError):
+    status_code = 422
+    code = "no_seat_map"
+    message = "This event is general admission: it has no individual seats."

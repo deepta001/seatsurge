@@ -39,6 +39,7 @@ def test_all_tables_are_registered() -> None:
         "tickets",
         "outbox_events",
         "processed_messages",
+        "seats",
     }
 
 

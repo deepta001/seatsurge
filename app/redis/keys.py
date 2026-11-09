@@ -43,3 +43,8 @@ def rehydrate_lock_key(event_id: int, tier_id: int) -> str:
 def seats_returned_key(order_id: str) -> str:
     """Marks a cancelled order whose seats are already back on the counter (no double return)."""
     return f"returned:{order_id}"
+
+
+def seat_key(event_id: int, seat_id: int) -> str:
+    """Exists while a seat is held; its value is the hold id (reserved seating, S6.2)."""
+    return f"seat:{event_id}:{seat_id}"
