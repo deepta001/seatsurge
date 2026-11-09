@@ -56,6 +56,7 @@ checked. The teach-back for all of them happens at the end.
 - S8.2 Metrics and the Grafana dashboard: built, not checked.
 - S8.2b Structured logs and the correlation id: built, not checked.
 - S8.3 Locust load test and verify_consistency.py: built, not checked.
+- S8.4 Chaos runs and test 16: built, not checked.
 
 ## Shaky topics
 
@@ -2405,5 +2406,47 @@ by itself). Harmless; not deleted without asking.
 
 **Key concepts:** load testing, thundering herd, success vs expected
 rejection, consistency checks and exit codes, cleanup by id.
+
+**Understanding check:** deferred to the end of the project.
+
+## S8.4: Chaos runs (kill the worker, flush Redis) and test 16 (2026-11-09)
+
+**Built:**
+- `docker-compose.yml`: host ports and the network subnet are settings
+  (defaults unchanged), so a second copy can run beside the dev stack.
+- `loadtest/chaos.env` + `loadtest/chaos.py`: start a throwaway copy, run the
+  1,000-buyer sale, break it at a chosen moment, reconcile if needed, verify,
+  delete the copy (volumes too). Scenarios: `kill-worker`, `flush-redis`,
+  `two-workers`.
+- `tests/adversarial/test_16_two_workers_same_event_no_conflicts.py`: two
+  relays and two consumers on one event's 30 orders, all at once.
+- `loadtest/locustfile.py`: finished buyers stay idle; a watcher ends the test.
+
+**Ran it:**
+- 350/350 tests passed; ruff, format and mypy clean.
+- Test 16 mutation: a read-modify-write tier update (read sold, then write
+  it back) was caught: only 16 of 30 orders got through (duplicate ticket
+  numbers refused by the unique index).
+- Chaos, each 1,000 buyers / 100 seats / 3 replicas, final runs:
+  - kill-worker: SIGKILL at 97 orders placed / 31 confirmed; 34 PENDING
+    through the 5 s outage; 100 tickets, 0 oversold, CONSISTENT;
+  - flush-redis: FLUSHALL at 88 orders placed / 23 confirmed; reconcile
+    re-queued 46 lost messages; 100 tickets, 0 oversold, CONSISTENT;
+  - two-workers: 46 / 54 orders per worker; 100 tickets, CONSISTENT.
+  Every run: 100 holds, 900 sold out, 100 confirms, 0 failed requests.
+- Afterwards no chaos containers, volumes or networks remained, and the dev
+  stack was untouched.
+
+**Debugging moments:**
+1. A chaos trigger on a timer (2 s) may have hit after the work was done.
+   Triggering on database state made the chaos provably mid-flight.
+2. Locust replaced stopped users while ramping up, and the replacements ran
+   out of buyers (StopIteration, then StopUser tracebacks, and the test ran
+   to its 3-minute limit). Finished buyers now idle; a watcher quits.
+3. The S8.3 runs didn't show this because all 1,000 users started at once.
+
+**Key concepts:** chaos testing, recovery paths (ack after commit, rebuild
+from the source of truth, re-queue), hot rows and atomic updates, isolated
+test environments.
 
 **Understanding check:** deferred to the end of the project.

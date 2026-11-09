@@ -624,3 +624,7 @@ Plain-English meanings of every technical term, with where it first appears.
 | Consistency check | Comparing two stores (Postgres, Redis) that should agree, and reporting any difference. | `scripts/verify_consistency.py` |
 | Exit code | A number a program returns when it ends: 0 = success, anything else = a problem. | `verify_consistency.py` |
 | Makefile | A file of named shortcuts for commands (`make test`). | `Makefile` |
+| Chaos testing | Breaking parts of a running system on purpose to prove it recovers correctly. | `loadtest/chaos.py` |
+| SIGKILL | The "stop now" signal: the process gets no chance to clean up. | the kill-worker scenario |
+| Compose project | One named copy of a Compose setup; two projects can run side by side. | `seatsurge-chaos` |
+| Hot row | One database row that very many transactions update, which can make them conflict. | `tiers`, test 16 |

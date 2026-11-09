@@ -996,3 +996,33 @@ load test (S8.3).
 - **Cleanup by id, never by pattern or TRUNCATE:** the run's ids are written
   to `loadtest/run.json` / `created.json` (git-ignored) and `cleanup.py`
   deletes exactly those rows and keys, so the dev database survives.
+
+### Chaos runs and two workers (S8.4)
+- **Chaos on a throwaway copy:** `loadtest/chaos.py` starts a second Compose
+  project (`seatsurge-chaos`) with its own ports, network and volumes
+  (`loadtest/chaos.env`; the compose file's host ports and subnet are now
+  settings with the old values as defaults), runs the sale, breaks it, checks
+  it, and deletes the copy. Flushing Redis on the dev stack would wipe dev
+  data, so it never happens there.
+- **Chaos is triggered by state, not by a timer:** the first attempt killed
+  the worker 2 s in, which may have been after it had already finished (the
+  sale lasts a few seconds). The runner now polls the database and acts when
+  the sale is visibly mid-flight (kill: >= 10 orders CONFIRMED; flush: >= 30
+  orders placed), and logs the counts at that moment as evidence.
+- **Why each one survives:**
+  - worker SIGKILL: nothing is acked before its commit, so unfinished
+    messages stay pending and are claimed again after the restart; outbox rows
+    the dead relay held are unlocked when its connection dies and are
+    published again; duplicates are harmless (S4.4);
+  - Redis FLUSHALL: missing counters are rebuilt from Postgres under the lock
+    (counting PENDING orders), the worker recreates its consumer group, and
+    reconcile re-queues PENDING orders whose stream messages were lost. A buyer
+    whose live hold vanished would have to hold again (their confirm fails);
+    that did not happen in these runs, but is expected and safe;
+  - two workers: different consumers get different messages; the shared
+    `tiers` row is updated by one atomic statement, so concurrent workers
+    wait briefly on its row lock and never retry (test 16).
+- **Locust users stay idle after buying** instead of stopping: a stopped user
+  is replaced while Locust is still ramping up, and the replacements had no
+  buyers left (found in the first chaos run). A watcher greenlet ends the test
+  once every buyer has finished.

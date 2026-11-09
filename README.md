@@ -44,6 +44,7 @@ try to buy the same limited seats at once.
 | **Metrics and dashboard (S8.2):** Prometheus scrapes every api replica and the worker: request latency by route template, holds created/rejected by reason, orders placed/confirmed/failed (counted once, after commit), dead letters, hold expiries, outbox and stream backlog, Redis script latency, and `invariant_violations_total`, which every test asserts stays 0 unless it trips a backstop on purpose. Grafana dashboard provisioned from `deploy/grafana/`; both bound to 127.0.0.1, Grafana password from `.env`; `/metrics` not routed by nginx | Prometheus :9090, Grafana :3000 | `tests/integration/test_metrics.py` + the autouse guard in `tests/conftest.py` |
 | **Structured logs, traceable end to end (S8.2b):** one JSON object per log line; every request gets a correlation id (nginx's `$request_id`, or a fresh one; unsafe incoming ids are replaced), returned in `X-Correlation-ID`, written on every log line and access line, stored on the outbox row, and carried through the stream to the worker's log lines | all routes, relay, worker | `tests/integration/test_correlation.py`, `tests/unit/test_log_setup.py`; live: `learning/examples/s8_2b/trace_a_purchase.py` |
 | **Load test + consistency check (S8.3):** Locust, 1,000 buyers on 100 seats through nginx and 3 api replicas, each holding then confirming once: 3 runs, each exactly 100 holds / 900 sold out / 100 orders / 100 tickets, 0 failed requests, 0 oversold; `scripts/verify_consistency.py` then confirmed Postgres and Redis agree (exit 0). Latency numbers and machine specs go in `docs/benchmarks.md` (S8.5) | `make load`, `make verify` | `loadtest/`, `scripts/verify_consistency.py`, `tests/integration/test_verify_consistency.py` |
+| **Chaos runs (S8.4), the full headline test:** 1,000 buyers on 100 seats through nginx and 3 replicas while (a) the worker is SIGKILLed mid-stream (34 orders waiting, restarted 5 s later), (b) Redis is FLUSHALLed mid-sale (88 orders placed; reconcile re-queued 46 lost messages), (c) two workers share the work (46 / 54 orders). Each: exactly 100 tickets, 0 oversold, 0 failed requests, `verify_consistency` CONSISTENT. Run on a throwaway copy of the stack | `loadtest/chaos.py` | `loadtest/chaos.py` runs + adversarial test 16 |
 | **Never oversell (test 1):** 500 concurrent HTTP buyers wanting 1-4 seats on 50 seats never take more than 50 (also with the counter rebuilt mid-rush); the test fails if the atomic script is swapped for naive check-then-take. A demo with 3 API processes on the dev stack: 1,000 buyers / 100 seats gave exactly 100 holds | `POST /events/{id}/holds` | `tests/concurrency/test_01_concurrent_holds_never_oversell.py` |
 | **Holds:** reserve 1-10 seats for 5 minutes via one atomic Redis Lua script; 409 sold_out or hold_limit_exceeded (10 per user per event); a missing counter is a 503, never zero. 300 simultaneous HTTP requests on 50 seats give exactly 50 holds | `POST /events/{id}/holds` | `tests/integration/test_holds_api.py`, `tests/integration/test_reserve_tier.py` |
 | A missing Redis counter is rebuilt from Postgres + active holds (one rebuild at a time, even for 50 simultaneous requests), never treated as zero; 503 only if the rebuild can't finish | automatic in `POST /events/{id}/holds` | adversarial test 12 |
@@ -124,6 +125,15 @@ With the stack up (`make up`):
 make load        # 1,000 buyers on 100 seats through nginx, then the consistency check
 make verify      # Postgres and Redis agree, nothing oversold (exit 1 if not)
 make load-clean  # delete exactly what the last load run created
+```
+
+Chaos runs (each starts a throwaway copy of the stack on other ports,
+breaks it mid-sale, verifies, and deletes the copy):
+
+```
+uv run --group load python -m loadtest.chaos kill-worker
+uv run --group load python -m loadtest.chaos flush-redis
+uv run --group load python -m loadtest.chaos two-workers
 ```
 
 On Windows (no `make`), run the commands listed under each target in the

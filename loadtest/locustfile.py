@@ -1,7 +1,7 @@
 """The headline load test (CLAUDE.md section 1): many buyers, few seats, through nginx (S8.3).
 
 Each simulated user is one real buyer who tries ONCE: hold 1 seat; if that
-worked, confirm it (mock payment); then stop. A 409 sold_out is the
+worked, confirm it (mock payment); then idle until the end. A 409 sold_out is the
 expected answer for most of them, so it counts as a success, not an error.
 When every user has finished, the test stops by itself.
 
@@ -22,8 +22,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+import gevent  # type: ignore[import-untyped]  # Locust's own dependency; no type hints
 from locust import FastHttpUser, constant, events, task
-from locust.exception import StopUser
 
 from app.core.tokens import create_access_token
 from app.db.models import UserRole
@@ -42,7 +42,11 @@ class Buyer(FastHttpUser):
     wait_time = constant(0)  # no "thinking time": everyone clicks at once
 
     def on_start(self) -> None:
-        self.user_id = next(UNUSED_BUYERS)
+        # More users than buyers can't happen (a finished buyer stays, idle),
+        # but if it ever did, the extra user just idles too.
+        buyer = next(UNUSED_BUYERS, None)
+        self.done = buyer is None
+        self.user_id = buyer or 0
         self.headers = {
             "Authorization": f"Bearer {create_access_token(self.user_id, UserRole.USER)}"
         }
@@ -54,10 +58,17 @@ class Buyer(FastHttpUser):
 
     @task
     def buy_one_ticket(self) -> None:
+        if self.done:
+            # Finished buyers stay, idle, until the test ends. If they stopped,
+            # Locust would start replacement users while still ramping up
+            # (found in S8.4), and there are no buyers left for them.
+            gevent.sleep(60)
+            return
         try:
             self.try_to_buy()
         finally:
-            self.finish()
+            OUTCOMES["buyers finished"] += 1
+            self.done = True
 
     def try_to_buy(self) -> None:
         with self.client.post(
@@ -92,12 +103,21 @@ class Buyer(FastHttpUser):
                 confirmed.failure(f"confirm answered {confirmed.status_code}")
                 OUTCOMES[f"confirm: unexpected {confirmed.status_code}"] += 1
 
-    def finish(self) -> None:
-        """This buyer is done. The last one to finish ends the whole test."""
-        OUTCOMES["buyers finished"] += 1
-        if OUTCOMES["buyers finished"] == self.environment.parsed_options.num_users:
-            self.environment.runner.quit()
-        raise StopUser()
+
+def stop_when_every_buyer_has_finished(environment: Any, **_kwargs: Any) -> None:
+    """A small watcher beside the users: ends the test once every buyer has tried.
+
+    Stopping from inside the last user didn't work while Locust was still
+    ramping up (S8.4), so a separate greenlet does it; it also ends the idle
+    finished buyers.
+    """
+
+    def watch() -> None:
+        while OUTCOMES["buyers finished"] < len(RUN["user_ids"]):
+            gevent.sleep(0.1)
+        environment.runner.quit()
+
+    gevent.spawn(watch)
 
 
 def report(environment: Any, **_kwargs: Any) -> None:
@@ -108,5 +128,6 @@ def report(environment: Any, **_kwargs: Any) -> None:
         print(f"  {outcome:32} {count}")
 
 
+events.test_start.add_listener(stop_when_every_buyer_has_finished)  # type: ignore[no-untyped-call]
 # Runs once when Locust stops (after the last buyer, or at --run-time).
 events.quitting.add_listener(report)  # type: ignore[no-untyped-call]  # locust lacks a hint
